@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "d3lta"
+version = "1.0.0"
+description = "d3lta package"
+readme = "README.md"
+authors = ["Viginum"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+demoji = "1.1.0"
+faiss-cpu = "1.9.0.post1"
+fasttext = "0.9.3"
+gensim = "4.3.3"
+networkx = "2.8.8"
+pandas = "2.2.3"
+polyleven = "0.8"
+scipy = "1.12.0"
+tensorflow = "2.18.0"
+tensorflow-hub = "0.16.1"
+tensorflow-text = "2.18.1"
+tqdm = "4.67.1"
+
+[build-system]
+requires = ["setuptools","poetry-core"]
+build-backend = "poetry.core.masonry.api"
