@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "d3lta"
 version = "1.0.0"
-description = "d3lta package"
+description = "A library for detecting verbatim-duplicated contents within a vast amount of documents"
 readme = "README.md"
 authors = ["Viginum"]
 
