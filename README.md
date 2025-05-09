@@ -17,7 +17,7 @@ It distinguishes 3 types of duplicate contents : copypasta (almost exact duplica
 
 ---
 
-<img style="display: block; margin: auto;" src="./static/graph.gif"/>
+<img style="display: block; margin: auto;" src="https://github.com/VIGINUM-FR/D3lta/raw/main/static/graph.gif"/>
 
 
 ## 💻 Installing 
