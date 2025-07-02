@@ -413,9 +413,6 @@ def find_matches(
 
 def similarity_levenshtein(pair):
     s1, s2 = pair
-    assert (
-        min(len(s1), len(s2)) > 0
-    ), "one text_grapheme is None and levenshtein can't be retrieved"
     return 1 - levenshtein(s1, s2) / max(len(s1), len(s2))
 
 
