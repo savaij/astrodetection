@@ -1,3 +1,4 @@
+name: d3lta_light
 channels:
   - conda-forge
   - defaults

@@ -1,3 +1,4 @@
+name: d3lta_standard
 channels:
   - conda-forge
   - defaults
