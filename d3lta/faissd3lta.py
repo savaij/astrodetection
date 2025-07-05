@@ -19,8 +19,6 @@ from tqdm.contrib.concurrent import thread_map
 from tqdm.auto import trange
 import networkx as nx
 
-import sys
-
 
 def timeit(func):
     @wraps(func)
@@ -49,24 +47,18 @@ def grouper(iterable, n):
 #### Preprocessing Dataset ####
 ###############################
 
-if sys.version_info[0] >= 3:
-    unicode = str
 
 def deaccent(text):
     """
-    Remove accentuation from the given string. Input text is either a unicode string or utf8 encoded bytestring.
-
-    Return input string with accents removed, as unicode.
+    Remove accentuation from the given string. Input must be a Unicode string.
 
     >>> deaccent("Šéf chomutovských komunistů dostal poštou bílý prášek")
-    u'Sef chomutovskych komunistu dostal postou bily prasek'
-
+    'Sef chomutovskych komunistu dostal postou bily prasek'
     """
-    if not isinstance(text, unicode):
-        # assume utf8 for byte strings, use default (strict) error handling
-        text = text.decode('utf8')
+    if not isinstance(text, str):
+        text = text.decode('utf8')  # solo se accetti anche byte string
     norm = unicodedata.normalize("NFD", text)
-    result = u('').join(ch for ch in norm if unicodedata.category(ch) != 'Mn')
+    result = ''.join(ch for ch in norm if unicodedata.category(ch) != 'Mn')
     return unicodedata.normalize("NFC", result)
 
 
