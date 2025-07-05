@@ -1,3 +1,4 @@
-from .faissd3lta import *
+from .faissd3lta import semantic_faiss
+import astro_indices
 
-__all__ = ['faissd3lta']
+__all__ = ['semantic_faiss', 'astro_indices']
