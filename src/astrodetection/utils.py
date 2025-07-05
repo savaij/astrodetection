@@ -156,6 +156,9 @@ def compute_bot_likelihood_metrics(df: pd.DataFrame, matches: pd.DataFrame = Non
     # 5. Default Handle Score
     results['default_handle_score (%)'] = round(default_handle_score(df, num_digits), 2)
 
+    #6. Support number of tweets
+    results['number_of_tweets'] = len(df)
+
     return results
 
 def create_network(match_df, metadata_df):
