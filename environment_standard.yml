@@ -1,0 +1,15 @@
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python
+  - demoji
+  - faiss-cpu
+  - fasttext
+  - gensim
+  - networkx
+  - pandas
+  - polyleven
+  - scipy
+  - requests
+  - tqdm

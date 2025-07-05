@@ -1,1 +1,1 @@
-Utility
+To install, use the YAML file for conda.
