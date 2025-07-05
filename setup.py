@@ -7,6 +7,6 @@ setup(
     author='Il tuo nome',
     author_email='tuo@email.com',
     url='https://github.com/savaij/astrodetection',
-    packages=find_packages(),
+    packages=['astrodetection','astrodetection_light'],
     python_requires='>=3.7',
 )
