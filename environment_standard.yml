@@ -15,4 +15,4 @@ dependencies:
   - tqdm
   - pip
   - pip:
-      - git+https://github.com/savaij/D3lta.git
+      - git+https://github.com/savaij/astrodetection.git
