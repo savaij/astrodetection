@@ -16,6 +16,8 @@ import networkx as nx
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import normalize
 
+import sys
+
 
 def timeit(func):
     @wraps(func)
@@ -43,6 +45,9 @@ def grouper(iterable, n):
 ###############################
 #### Preprocessing Dataset ####
 ###############################
+
+if sys.version_info[0] >= 3:
+    unicode = str
 
 def deaccent(text):
     """
@@ -191,7 +196,7 @@ def prepare_dataset(dataset: Union[pd.Series, pd.DataFrame], min_size_txt: int =
                 remove_urls=True,
                 remove_mentions=True,
                 remove_emojis=True,
-                remove_hashtags_frontend=True,
+                remove_hashtags_frontend=False,
                 remove_twitter_cropend=False,
                 replace_newline_characters=True,
                 remove_punctuation=True,
