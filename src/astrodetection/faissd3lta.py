@@ -584,3 +584,45 @@ def semantic_faiss(
     df_clusters = create_dataset_clusters(df, matches)
 
     return matches, df_clusters
+
+### STUFF ADDED BY SAVA
+
+def prepare_input_data(dataframe, embeddings=None, model=None):
+    """
+    Prepares a filtered DataFrame and its corresponding embedding DataFrame.
+
+    Parameters:
+    ----------
+    dataframe : pd.DataFrame
+        Input DataFrame expected to contain a 'tweet' column.
+    embeddings : np.ndarray, pd.Series, or None, optional
+        Precomputed embeddings for the 'tweet' column. If None, embeddings
+        will be computed using the provided `model`.
+    model : object, optional
+        A model with an `.encode()` method that converts a list of texts
+        into their embedding vectors. Required if `embeddings` is None.
+
+    Returns:
+    -------
+    pd.DataFrame
+        A DataFrame containing the 'tweet' column and a default 'language' column.
+    pd.DataFrame
+        A DataFrame of corresponding embeddings with aligned index.
+    """
+    tweets_df = dataframe[['tweet']].copy()
+
+    if embeddings is None:
+        if model is None:
+            raise ValueError("Either `embeddings` must be provided or `model` must be specified.")
+        embeddings = model.encode(tweets_df['tweet'].tolist())
+
+    if isinstance(embeddings, pd.Series):
+        embeddings.index = embeddings.index.astype(str)
+        embeddings = embeddings.loc[tweets_df.index].values
+        embeddings_df = pd.DataFrame(np.stack(embeddings, dtype=np.float32), index=tweets_df.index)
+    else:
+        embeddings_df = pd.DataFrame(embeddings, index=tweets_df.index)
+
+    tweets_df['language'] = 'fr'
+
+    return tweets_df, embeddings_df

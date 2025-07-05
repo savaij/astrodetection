@@ -157,3 +157,78 @@ def compute_bot_likelihood_metrics(df: pd.DataFrame, matches: pd.DataFrame = Non
     results['default_handle_score (%)'] = round(default_handle_score(df, num_digits), 2)
 
     return results
+
+def create_network(match_df, metadata_df):
+    """
+    Create a directed graph representing tweet relationships and metadata.
+
+    Parameters:
+    -----------
+    match_df : pd.DataFrame
+        DataFrame containing matched tweet pairs with columns:
+            - 'source': ID of the source tweet
+            - 'target': ID of the target tweet
+            - 'text_to_embed_source': Text content of the source tweet
+            - 'text_to_embed_target': Text content of the target tweet
+            - 'score': Similarity score between source and target
+            - 'dup_type' (optional): Type of duplication or relationship
+
+    metadata_df : pd.DataFrame
+        DataFrame indexed by tweet ID with metadata columns:
+            - 'username': Author of the tweet
+            - 'likes_count': Number of likes
+            - 'tweet_date': Timestamp of the tweet
+            - 'link_tweet': URL link to the tweet
+
+    Returns:
+    --------
+    Sigma
+        A Sigma visualization object representing the network.
+    """
+
+    graph = nx.DiGraph()
+
+    for _, row in match_df.iterrows():
+        source_id = row["source"]
+        target_id = row["target"]
+
+        # Extract source tweet metadata
+        source_data = {
+            "label": row["text_to_embed_source"],
+            "author": metadata_df.loc[source_id, "username"],
+            "likes": metadata_df.loc[source_id, "likes_count"],
+            "time": metadata_df.loc[source_id, "tweet_date"],
+            "link": metadata_df.loc[source_id, "link_tweet"]
+        }
+
+        # Extract target tweet metadata
+        target_data = {
+            "label": row["text_to_embed_target"],
+            "author": metadata_df.loc[target_id, "username"],
+            "likes": metadata_df.loc[target_id, "likes_count"],
+            "time": metadata_df.loc[target_id, "tweet_date"],
+            "link": metadata_df.loc[target_id, "link_tweet"]
+        }
+
+        # Add nodes to graph
+        graph.add_node(source_id, **source_data)
+        graph.add_node(target_id, **target_data)
+
+        # Add directed edge with duplication type and similarity score
+        graph.add_edge(
+            source_id,
+            target_id,
+            dup_type=row.get("dup_type", "default"),
+            weight=row["score"]
+        )
+
+    # Create Sigma visualization
+    sigma_viz = Sigma(
+        graph,
+        edge_color="dup_type",
+        edge_weight="weight",
+        node_size="likes",
+        node_size_range=(3, 15),
+    )
+
+    return sigma_viz

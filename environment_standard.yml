@@ -16,3 +16,4 @@ dependencies:
   - pip
   - pip:
       - git+https://github.com/savaij/astrodetection.git
+      - ipysigma
