@@ -11,3 +11,5 @@ dependencies:
   - tqdm
   - numpy
   - scikit-learn
+  - pip:
+      - git+https://github.com/savaij/astrodetection.git
