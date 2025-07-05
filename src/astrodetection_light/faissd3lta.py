@@ -493,12 +493,12 @@ def create_dataset_clusters(dataset: pd.DataFrame, edgelist: pd.DataFrame):
 
 def semantic_faiss(
     df: pd.DataFrame,
-    min_size_txt: int = 30,
+    min_size_txt: int = 0,
     df_embeddings_use: pd.DataFrame = None,
     embeddings_to_save: str = None,
-    threshold_grapheme: float = 0.693,
+    threshold_grapheme: float = 0.8,
     threshold_language: float = 0.715,
-    threshold_semantic=0.85,
+    threshold_semantic=0.9,
     remove_matches_same_user: str = None,
 ):
     """Apply end to end 3 delta methodology with faiss

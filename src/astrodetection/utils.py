@@ -121,3 +121,39 @@ def default_handle_score(df: pd.DataFrame, num_digits: int = 5) -> tuple:
         n_true = 0.0
 
     return n_true
+
+def compute_bot_likelihood_metrics(df: pd.DataFrame, matches: pd.DataFrame = None, threshold: int = 1, num_digits: int = 5) -> dict:
+    """
+    Combina diverse metriche per stimare la probabilità che un insieme di account sia composto da bot.
+
+    Parameters:
+        df (pd.DataFrame): Il DataFrame principale contenente i dati degli account/post.
+        matches (pd.DataFrame, optional): DataFrame con colonne 'source' e 'target' per il punteggio copypasta.
+        threshold (int): Threshold minimo di occorrenze per considerare un match nel punteggio copypasta.
+        num_digits (int): Numero di cifre finali nel nome utente per rilevare handle predefiniti.
+
+    Returns:
+        dict: Dizionario con tutte le metriche calcolate.
+    """
+
+    results = {}
+
+    # 1. Copypasta Score (solo se fornito `matches`)
+    if matches is not None:
+        results['copypasta_score (%)'] = round(copypasta_score(matches, df, threshold), 2)
+
+    # 2. Top User Dominance
+    top_users_percent, top_users_n = get_top_users(df)
+    results['top_users_post_percent (%)'] = round(top_users_percent, 2)
+    results['top_users_count'] = top_users_n
+
+    # 3. Zero Followers & Following
+    results['zero_followers_and_following (%)'] = round(calculate_zero_fw_score(df), 2)
+
+    # 4. No Image and Description
+    results['no_image_and_description (%)'] = round(no_image_description_score(df), 2)
+
+    # 5. Default Handle Score
+    results['default_handle_score (%)'] = round(default_handle_score(df, num_digits), 2)
+
+    return results
