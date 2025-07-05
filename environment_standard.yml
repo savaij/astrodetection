@@ -14,5 +14,6 @@ dependencies:
   - scipy
   - requests
   - tqdm
+  - pip
   - pip:
       - git+https://github.com/savaij/D3lta.git
