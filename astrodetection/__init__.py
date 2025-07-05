@@ -1,4 +1,4 @@
 from .faissd3lta import semantic_faiss
-import utilities
+from .. import utilities
 
 __all__ = ['semantic_faiss', 'utilities']
