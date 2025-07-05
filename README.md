@@ -5,13 +5,18 @@ Astrodetection is a Python library designed for detecting astroturfing clues fro
 
 ## Installation
 
-1. Ensure Python >= 3.7 is installed.
-2. Use the YAML file to configure the environment with conda:
+1. Use the YAML file to configure the environment with conda:
 
    ```bash
-   conda env create -f environment_standard.yml
-   conda activate astrodetection
+   conda create -n astrodetection_env
+   conda activate astrodetection_env
+   conda env update -f environment_standard.yml
    ```
+
+2. Use pip to actually install the library from git:
+    ```bash
+    pip install git+https://github.com/savaij/astrodetection.git
+    ```
 
 **Note:** the ```environment_standard.yml``` configuration file uses FAISS and Fasttext libraries for [VIGINUM D3LTA implementation](https://github.com/VIGINUM-FR/D3lta)
 
