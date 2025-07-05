@@ -7,7 +7,7 @@ setup(
     author='Il tuo nome',
     author_email='tuo@email.com',
     url='https://github.com/savaij/astrodetection',
-    packages=find_packages(where="src", exclude=["utilities", "utilities.*"]),
+    packages=find_packages(where="src"),
     package_dir={"": "src"},
     python_requires='>=3.7',
 )
