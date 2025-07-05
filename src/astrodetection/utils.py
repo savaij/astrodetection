@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from collections import Counter
 import re
+import networkx as nx
 
 def copypasta_score(matches, df, threshold=1):
     """
