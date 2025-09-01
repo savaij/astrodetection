@@ -28,24 +28,27 @@ def copypasta_score(matches, df, threshold=1):
     return score
 
 
-def get_top_users(df):
+def get_top_users(df, percent=1):
     """
     Function to calculate the percentage of posts from the most active users.
+    Default, top 1% most active users.
     """
     user_post_counts = df['username'].value_counts()
 
-    # Calculate 10% of the total number of users (rounded up)
-    top_10_percent_count = int(np.ceil(len(user_post_counts) * 0.01))
+    ratio = percent / 100
+
+    # Calculate x% of the total number of users (rounded up)
+    top_x_percent_count = int(np.ceil(len(user_post_counts) * ratio))
 
     # Extract the top users
-    top_users = user_post_counts.head(top_10_percent_count)
+    top_users = user_post_counts.head(top_x_percent_count)
 
     # Filter the original dataframe to include only these users
     top_users_df = df[df['username'].isin(top_users.index)]
 
     len(top_users_df) / len(df) * 100
 
-    return len(top_users_df) / len(df) * 100 , top_10_percent_count
+    return len(top_users_df) / len(df) * 100 , top_x_percent_count
 
 
 def calculate_zero_fw_score(df: pd.DataFrame) -> tuple:
@@ -90,6 +93,18 @@ def no_image_description_score(df: pd.DataFrame) -> tuple:
 
     return zero_score
 
+def over_tot_post_per_day(df: pd.DataFrame, threshold: int = 70) -> float:
+    """
+    Calculate the percentage of posts posted by users that post more than a specified number of posts per day.
+
+    Parameters:
+        df (pd.DataFrame): The input DataFrame, which must have 'tweet_per_day' column
+        threshold (int): The minimum number of posts per day to consider. Default is 70
+    """
+
+    mask = df['tweets_per_day'] > threshold
+    return mask.value_counts(normalize=True).get(True, 0) * 100
+
 def _check_username_digits(username: str, num_digits: int) -> bool:
     """
     Check if a Twitter username ends with a specified number of digits.
@@ -124,7 +139,7 @@ def default_handle_score(df: pd.DataFrame, num_digits: int = 5) -> tuple:
 
     return n_true
 
-def compute_bot_likelihood_metrics(df: pd.DataFrame, matches: pd.DataFrame = None, threshold: int = 1, num_digits: int = 5) -> dict:
+def compute_bot_likelihood_metrics(df: pd.DataFrame, matches: pd.DataFrame = None, threshold: int = 1, num_digits: int = 5, top_x_percent: int = 1, over_post_per_day_threshold: int = 70) -> dict:
     """
     Combina diverse metriche per stimare la probabilità che un insieme di account sia composto da bot.
 
@@ -133,6 +148,7 @@ def compute_bot_likelihood_metrics(df: pd.DataFrame, matches: pd.DataFrame = Non
         matches (pd.DataFrame, optional): DataFrame con colonne 'source' e 'target' per il punteggio copypasta.
         threshold (int): Threshold minimo di occorrenze per considerare un match nel punteggio copypasta.
         num_digits (int): Numero di cifre finali nel nome utente per rilevare handle predefiniti.
+        over_post_per_day_threshold (int): Soglia per il numero di post al giorno per considerare un utente come "over".
 
     Returns:
         dict: Dizionario con tutte le metriche calcolate.
@@ -145,7 +161,7 @@ def compute_bot_likelihood_metrics(df: pd.DataFrame, matches: pd.DataFrame = Non
         results['copypasta_score (%)'] = round(copypasta_score(matches, df, threshold), 2)
 
     # 2. Top User Dominance
-    top_users_percent, top_users_n = get_top_users(df)
+    top_users_percent, top_users_n = get_top_users(df, top_x_percent)
     results['top_users_post_percent (%)'] = round(top_users_percent, 2)
     results['top_users_count'] = top_users_n
 
@@ -157,6 +173,8 @@ def compute_bot_likelihood_metrics(df: pd.DataFrame, matches: pd.DataFrame = Non
 
     # 5. Default Handle Score
     results['default_handle_score (%)'] = round(default_handle_score(df, num_digits), 2)
+
+    results['over_tweet_per_day (%)'] = round(over_tot_post_per_day(df, over_post_per_day_threshold), 2)
 
     #6. Support number of tweets
     results['number_of_tweets'] = len(df)

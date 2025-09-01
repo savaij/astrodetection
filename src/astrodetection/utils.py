@@ -102,7 +102,7 @@ def over_tot_post_per_day(df: pd.DataFrame, threshold: int = 70) -> float:
         threshold (int): The minimum number of posts per day to consider. Default is 70
     """
 
-    mask = df['tweet_per_day'] > threshold
+    mask = df['tweets_per_day'] > threshold
     return mask.value_counts(normalize=True).get(True, 0) * 100
 
 def _check_username_digits(username: str, num_digits: int) -> bool:
