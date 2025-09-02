@@ -28,12 +28,18 @@ def copypasta_score(matches, df, threshold=1):
     return score
 
 
-def get_top_users(df, percent=1):
+def get_top_users(df, percent=1, username_col: str = 'username'):
+    """Calculate the percentage of posts coming from the top *percent* most active users.
+
+    Parameters:
+        df (pd.DataFrame)
+        percent (float|int): Percentage of users to consider (e.g. 1 => top 1%).
+        username_col (str): Column name containing the user handle. Defaults to 'username'.
+
+    Returns:
+        (posts_percent, top_users_count)
     """
-    Function to calculate the percentage of posts from the most active users.
-    Default, top 1% most active users.
-    """
-    user_post_counts = df['username'].value_counts()
+    user_post_counts = df[username_col].value_counts()
 
     ratio = percent / 100
 
@@ -44,14 +50,14 @@ def get_top_users(df, percent=1):
     top_users = user_post_counts.head(top_x_percent_count)
 
     # Filter the original dataframe to include only these users
-    top_users_df = df[df['username'].isin(top_users.index)]
+    top_users_df = df[df[username_col].isin(top_users.index)]
 
     len(top_users_df) / len(df) * 100
 
     return len(top_users_df) / len(df) * 100 , top_x_percent_count
 
 
-def calculate_zero_fw_score(df: pd.DataFrame) -> tuple:
+def calculate_zero_fw_score(df: pd.DataFrame, followers_col: str = 'followers', following_col: str = 'following') -> float:
     """
     Calculate the percentage of rows where both 'followers' and 'following' are less than 1.
     
@@ -63,12 +69,12 @@ def calculate_zero_fw_score(df: pd.DataFrame) -> tuple:
         tuple: (name, zero_score_percent) where zero_score_percent is rounded to 4 decimal places.
     """
 
-    mask = (df['followers'] < 1) & (df['following'] < 1)
+    mask = (df[followers_col] < 1) & (df[following_col] < 1)
     zero_score = len(df[mask]) / len(df) * 100 if len(df) > 0 else 0
 
     return zero_score
 
-def no_image_description_score(df: pd.DataFrame) -> tuple:
+def no_image_description_score(df: pd.DataFrame, bio_col: str = 'bio', avatar_col: str = 'avatar') -> float:
     """
     Calculate the percentage of users with no bio and a default/empty/missing avatar.
     
@@ -80,12 +86,12 @@ def no_image_description_score(df: pd.DataFrame) -> tuple:
         tuple: (name, no_image_description_percent) where the percent is rounded to 4 decimal places.
     """
 
-    mask_desc = (df['bio'] == "") | (df['bio'].isna())
+    mask_desc = (df[bio_col] == "") | (df[bio_col].isna())
 
     mask_image = (
-        (df['avatar'] == 'https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png') |
-        (df['avatar'] == '') |
-        (df['avatar'].isna())
+        (df[avatar_col] == 'https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png') |
+        (df[avatar_col] == '') |
+        (df[avatar_col].isna())
     )
 
     mask = mask_desc & mask_image
@@ -93,7 +99,7 @@ def no_image_description_score(df: pd.DataFrame) -> tuple:
 
     return zero_score
 
-def over_tot_post_per_day(df: pd.DataFrame, threshold: int = 70) -> float:
+def over_tot_post_per_day(df: pd.DataFrame, threshold: int = 70, tweets_per_day_col: str = 'tweets_per_day') -> float:
     """
     Calculate the percentage of posts posted by users that post more than a specified number of posts per day.
 
@@ -102,7 +108,7 @@ def over_tot_post_per_day(df: pd.DataFrame, threshold: int = 70) -> float:
         threshold (int): The minimum number of posts per day to consider. Default is 70
     """
 
-    mask = df['tweets_per_day'] > threshold
+    mask = df[tweets_per_day_col] > threshold
     return mask.value_counts(normalize=True).get(True, 0) * 100
 
 def _check_username_digits(username: str, num_digits: int) -> bool:
@@ -119,7 +125,7 @@ def _check_username_digits(username: str, num_digits: int) -> bool:
     pattern = r'\d{' + str(num_digits) + r'}$'
     return bool(re.search(pattern, username))
 
-def default_handle_score(df: pd.DataFrame, num_digits: int = 5) -> tuple:
+def default_handle_score(df: pd.DataFrame, num_digits: int = 5, username_col: str = 'username') -> float:
     """
     Calculate the percentage of usernames that end with a given number of digits.
     
@@ -131,7 +137,7 @@ def default_handle_score(df: pd.DataFrame, num_digits: int = 5) -> tuple:
         tuple: (name, default_handle_percent) rounded to 2 decimal places.
     """
 
-    matches = df['username'].apply(lambda x: _check_username_digits(x, num_digits))
+    matches = df[username_col].apply(lambda x: _check_username_digits(x, num_digits))
     if matches.any():
         n_true = matches.value_counts(normalize=True).get(True, 0) * 100
     else:
@@ -139,7 +145,21 @@ def default_handle_score(df: pd.DataFrame, num_digits: int = 5) -> tuple:
 
     return n_true
 
-def compute_bot_likelihood_metrics(df: pd.DataFrame, matches: pd.DataFrame = None, threshold: int = 1, num_digits: int = 5, top_x_percent: int = 1, over_post_per_day_threshold: int = 70) -> dict:
+def compute_bot_likelihood_metrics(
+    df: pd.DataFrame,
+    matches: pd.DataFrame = None,
+    threshold: int = 1,
+    num_digits: int = 5,
+    top_x_percent: int = 1,
+    over_post_per_day_threshold: int = 70,
+    # Column name overrides (keep defaults for backwards compatibility)
+    username_col: str = 'username',
+    followers_col: str = 'followers',
+    following_col: str = 'following',
+    bio_col: str = 'bio',
+    avatar_col: str = 'avatar',
+    tweets_per_day_col: str = 'tweets_per_day'
+) -> dict:
     """
     Combina diverse metriche per stimare la probabilità che un insieme di account sia composto da bot.
 
@@ -161,47 +181,73 @@ def compute_bot_likelihood_metrics(df: pd.DataFrame, matches: pd.DataFrame = Non
         results['copypasta_score (%)'] = round(copypasta_score(matches, df, threshold), 2)
 
     # 2. Top User Dominance
-    top_users_percent, top_users_n = get_top_users(df, top_x_percent)
+    top_users_percent, top_users_n = get_top_users(df, top_x_percent, username_col=username_col)
     results['top_users_post_percent (%)'] = round(top_users_percent, 2)
     results['top_users_count'] = top_users_n
 
     # 3. Zero Followers & Following
-    results['zero_followers_and_following (%)'] = round(calculate_zero_fw_score(df), 2)
+    # 3. Zero Followers & Following
+    if followers_col in df.columns and following_col in df.columns:
+        results['zero_followers_and_following (%)'] = round(calculate_zero_fw_score(df, followers_col=followers_col, following_col=following_col), 2)
+    else:
+        results['zero_followers_and_following (%)'] = None
 
     # 4. No Image and Description
-    results['no_image_and_description (%)'] = round(no_image_description_score(df), 2)
+    if bio_col in df.columns and avatar_col in df.columns:
+        results['no_image_and_description (%)'] = round(no_image_description_score(df, bio_col=bio_col, avatar_col=avatar_col), 2)
+    else:
+        results['no_image_and_description (%)'] = None
 
     # 5. Default Handle Score
-    results['default_handle_score (%)'] = round(default_handle_score(df, num_digits), 2)
+    if username_col in df.columns:
+        results['default_handle_score (%)'] = round(default_handle_score(df, num_digits, username_col=username_col), 2)
+    else:
+        results['default_handle_score (%)'] = None
 
-    results['over_tweet_per_day (%)'] = round(over_tot_post_per_day(df, over_post_per_day_threshold), 2)
+    if tweets_per_day_col in df.columns:
+        results['over_tweet_per_day (%)'] = round(over_tot_post_per_day(df, over_post_per_day_threshold, tweets_per_day_col=tweets_per_day_col), 2)
+    else:
+        results['over_tweet_per_day (%)'] = None
 
     #6. Support number of tweets
     results['number_of_tweets'] = len(df)
 
     return results
 
-def create_network(match_df, metadata_df):
+def create_network(
+    match_df: pd.DataFrame,
+    metadata_df: pd.DataFrame,
+    # metadata_df overridable column names (match_df assumed to have default columns)
+    username_col: str = 'username',
+    likes_col: str = 'likes_count',
+    tweet_date_col: str = 'tweet_date',
+    link_col: str = 'link_tweet',
+    label: str = 'text'
+):
     """
     Create a directed graph representing tweet relationships and metadata.
 
     Parameters:
     -----------
     match_df : pd.DataFrame
-        DataFrame containing matched tweet pairs with columns:
-            - 'source': ID of the source tweet
-            - 'target': ID of the target tweet
-            - 'text_to_embed_source': Text content of the source tweet
-            - 'text_to_embed_target': Text content of the target tweet
-            - 'score': Similarity score between source and target
-            - 'dup_type' (optional): Type of duplication or relationship
+        DataFrame containing matched tweet pairs with the following REQUIRED columns (fixed schema):
+            - 'source'
+            - 'target'
+            - 'text_to_embed_source'
+            - 'text_to_embed_target'
+            - 'score'
+            - 'dup_type' (optional)
 
     metadata_df : pd.DataFrame
-        DataFrame indexed by tweet ID with metadata columns:
-            - 'username': Author of the tweet
-            - 'likes_count': Number of likes
-            - 'tweet_date': Timestamp of the tweet
-            - 'link_tweet': URL link to the tweet
+        DataFrame indexed by tweet ID with (optionally) the following columns (names overridable):
+            - username_col (default 'username')
+            - likes_col (default 'likes_count')
+            - tweet_date_col (default 'tweet_date')
+            - link_col (default 'link_tweet')
+        Missing columns or missing index entries are tolerated and replaced with None.
+
+    Parameters (extra):
+        label (str): 'text' (default) -> node label is tweet text; 'author' -> node label is author username and tweet text stored under key 'text'.
 
     Returns:
     --------
@@ -211,27 +257,61 @@ def create_network(match_df, metadata_df):
 
     graph = nx.DiGraph()
 
+    if label not in {"text", "author"}:
+        raise ValueError("label must be either 'text' or 'author'")
+
+    def _safe_meta(node_id, col_name):
+        if col_name in metadata_df.columns and node_id in metadata_df.index:
+            value = metadata_df.loc[node_id, col_name]
+            # In case of duplicated index returning a Series
+            if isinstance(value, pd.Series):
+                return value.iloc[0]
+            return value
+        return None
+
     for _, row in match_df.iterrows():
-        source_id = row["source"]
-        target_id = row["target"]
+        source_id = row['source']
+        target_id = row['target']
 
-        # Extract source tweet metadata
-        source_data = {
-            "label": row["text_to_embed_source"],
-            "author": metadata_df.loc[source_id, "username"],
-            "likes": metadata_df.loc[source_id, "likes_count"],
-            "time": metadata_df.loc[source_id, "tweet_date"],
-            "link": metadata_df.loc[source_id, "link_tweet"]
-        }
+        # Extract metadata common pieces
+        source_author = _safe_meta(source_id, username_col)
+        target_author = _safe_meta(target_id, username_col)
+        source_text = row['text_to_embed_source']
+        target_text = row['text_to_embed_target']
 
-        # Extract target tweet metadata
-        target_data = {
-            "label": row["text_to_embed_target"],
-            "author": metadata_df.loc[target_id, "username"],
-            "likes": metadata_df.loc[target_id, "likes_count"],
-            "time": metadata_df.loc[target_id, "tweet_date"],
-            "link": metadata_df.loc[target_id, "link_tweet"]
-        }
+        if label == 'text':
+            source_data = {
+                "label": source_text,
+                "author": source_author,
+                "likes": _safe_meta(source_id, likes_col),
+                "time": _safe_meta(source_id, tweet_date_col),
+                "link": _safe_meta(source_id, link_col)
+            }
+            target_data = {
+                "label": target_text,
+                "author": target_author,
+                "likes": _safe_meta(target_id, likes_col),
+                "time": _safe_meta(target_id, tweet_date_col),
+                "link": _safe_meta(target_id, link_col)
+            }
+        else:  # label == 'author'
+            source_data = {
+                "label": source_author,
+                "author": source_author,
+                "text": source_text,
+                "likes": _safe_meta(source_id, likes_col),
+                "time": _safe_meta(source_id, tweet_date_col),
+                "link": _safe_meta(source_id, link_col)
+            }
+            
+            target_data = {
+                "label": target_author,
+                "author": target_author,
+                "text": target_text,
+                "likes": _safe_meta(target_id, likes_col),
+                "time": _safe_meta(target_id, tweet_date_col),
+                "link": _safe_meta(target_id, link_col)
+            }
 
         # Add nodes to graph
         graph.add_node(source_id, **source_data)
@@ -241,8 +321,8 @@ def create_network(match_df, metadata_df):
         graph.add_edge(
             source_id,
             target_id,
-            dup_type=row.get("dup_type", "default"),
-            weight=row["score"]
+            dup_type=row.get('dup_type', "default"),
+            weight=row['score']
         )
 
     # Create Sigma visualization
