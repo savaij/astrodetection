@@ -148,7 +148,7 @@ def default_handle_score(df: pd.DataFrame, num_digits: int = 5, username_col: st
 def compute_bot_likelihood_metrics(
     df: pd.DataFrame,
     matches: pd.DataFrame = None,
-    threshold: int = 1,
+    matches_threshold: int = 1,
     num_digits: int = 5,
     top_x_percent: int = 1,
     over_post_per_day_threshold: int = 70,
@@ -166,7 +166,7 @@ def compute_bot_likelihood_metrics(
     Parameters:
         df (pd.DataFrame): Il DataFrame principale contenente i dati degli account/post.
         matches (pd.DataFrame, optional): DataFrame con colonne 'source' e 'target' per il punteggio copypasta.
-        threshold (int): Threshold minimo di occorrenze per considerare un match nel punteggio copypasta.
+        matches_threshold (int): Threshold minimo di occorrenze per considerare un match nel punteggio copypasta.
         num_digits (int): Numero di cifre finali nel nome utente per rilevare handle predefiniti.
         over_post_per_day_threshold (int): Soglia per il numero di post al giorno per considerare un utente come "over".
 
@@ -178,7 +178,7 @@ def compute_bot_likelihood_metrics(
 
     # 1. Copypasta Score (solo se fornito `matches`)
     if matches is not None:
-        results['copypasta_score (%)'] = round(copypasta_score(matches, df, threshold), 2)
+        results['copypasta_score (%)'] = round(copypasta_score(matches, df, matches_threshold), 2)
 
     # 2. Top User Dominance
     top_users_percent, top_users_n = get_top_users(df, top_x_percent, username_col=username_col)

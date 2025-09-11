@@ -62,3 +62,8 @@ scores = astrodetection.compute_bot_likelihood_metrics(df, matches=matches)
 network = astrodetection.create_network(matches, df)
 ```
 
+# New changes
+
+1. _`semantic_faiss`_ function can now take detect only copypastas based on levenshtein distance, ignoring embeddings, if "skip" is passed as argument in _df_embeddings_use_ field.
+
+2. _`compute_bot_likelihood_metrics`_ function can now take columns' names as arguments for more customization

@@ -409,6 +409,60 @@ def find_matches(
     matches = matches.drop_duplicates("duplicates")
     return matches
 
+def find_matches_without_embeddings(
+    df: pd.DataFrame,
+    threshold_grapheme: float = 0.8,
+    batch_size: int = 1000
+):
+    """
+    Find potential matches using only grapheme-based similarity when embeddings are skipped.
+    This creates pairwise comparisons using only text similarity for copy-pasta detection.
+    
+    Args:
+        df (pd.DataFrame): dataframe containing text data with text_grapheme column
+        threshold_grapheme (float): threshold for grapheme similarity to consider as potential match
+        batch_size (int): batch size for processing to avoid memory issues
+        
+    Returns:
+        matches (pd.DataFrame): A dataframe of pairs with dummy semantic scores
+    """
+    print("Finding matches using grapheme distance only (copy-pasta detection)...")
+    
+    indices = df.index.tolist()
+    matches_list = []
+    
+    # Process in batches to avoid memory issues with large datasets
+    for i in range(0, len(indices), batch_size):
+        batch_indices = indices[i:i + batch_size]
+        
+        for idx1 in batch_indices:
+            for idx2 in indices:
+                if idx1 < idx2:  # Avoid duplicate pairs and self-comparison
+                    text1 = df.loc[idx1, 'text_grapheme']
+                    text2 = df.loc[idx2, 'text_grapheme']
+                    
+                    # Calculate grapheme similarity
+                    lev_score = similarity_levenshtein((text1, text2))
+                    
+                    # Only keep pairs that have high grapheme similarity (potential copy-pasta)
+                    # We use a stricter threshold since we're only looking for copy-pasta
+                    if lev_score > threshold_grapheme:
+                        # Use a dummy semantic score that will be ignored later
+                        matches_list.append([str(idx1), str(idx2), 1.0])  # dummy score of 1.0
+    
+    # Create matches dataframe
+    matches = pd.DataFrame(matches_list, columns=["source", "target", "score"])
+    
+    # Remove duplicates
+    matches["duplicates"] = matches.apply(
+        lambda row: str(min(row["source"], row["target"])) + "-" + str(max(row["source"], row["target"])),
+        axis=1,
+    )
+    matches = matches.drop_duplicates("duplicates")
+    
+    print(f"Found {len(matches)} potential copy-pasta matches for further analysis")
+    return matches
+
 
 def similarity_levenshtein(pair):
     s1, s2 = pair
@@ -421,6 +475,7 @@ def compute_duplicate_types(
     threshold_grapheme=0.693,
     threshold_language=0.715,
     threshold_semantic=0.85,
+    skip_semantic=False,
 ):
     """
     Distinguish 3 different duplicate types: translation, rewording & copypasta
@@ -429,6 +484,7 @@ def compute_duplicate_types(
         threshold_grapheme (float, optional): threshold to distinguish copypasta from rewording using levenshtein. Defaults to 0.693.
         threshold_language (float, optional): threshold to detect translation. Defaults to 0.715.
         threshold_semantic (float, optional): threshold to detect rewording. Defaults to 0.85.
+        skip_semantic (bool, optional): if True, only copy-pasta detection is performed, ignoring semantic scores. Defaults to False.
     Returns :
         matches_strict (pd.DataFrame): dataframe containing 'copypasta', 'translation' and 'rewording' pairs of texts with score (cosine similarity from embeddings) and score_lev (score calculated from levenshtein) associated.
     """
@@ -438,34 +494,70 @@ def compute_duplicate_types(
         "You need text_grapheme_source and text_grapheme_target columns in dataframe for Levenstein"
     )
 
-    assert ("language_source" in matches.columns) & (
-        "language_target" in matches.columns
-    ), print(
-        "You need language_source and language_target columns in dataframe for Levenstein"
-    )
+    if skip_semantic:
+        # When skipping semantic analysis, only perform copy-pasta detection
+        print("Semantic analysis skipped. Performing copy-pasta detection only.")
+        
+        # Initialize dup_type column
+        matches["dup_type"] = "potential"
+        
+        # Handle case where there are no matches
+        if len(matches) == 0:
+            matches["score_lev"] = []
+            matches_strict = matches[matches.dup_type == "copy-pasta"]
+        else:
+            # Compute Levenshtein scores for all matches
+            score_lev_list = []
+            for idx, row in matches.iterrows():
+                score = similarity_levenshtein(
+                    (row["text_grapheme_source"], row["text_grapheme_target"])
+                )
+                score_lev_list.append(score)
+            
+            matches["score_lev"] = score_lev_list
+            
+            # Only classify as copy-pasta and filter based on grapheme similarity
+            matches.loc[matches.score_lev > threshold_grapheme, "dup_type"] = "copy-pasta"
+            
+            # Return only copy-pasta matches
+            matches_strict = matches[matches.dup_type == "copy-pasta"]
+        
+    else:
+        # Original full analysis with language detection
+        assert ("language_source" in matches.columns) & (
+            "language_target" in matches.columns
+        ), print(
+            "You need language_source and language_target columns in dataframe for language analysis"
+        )
 
-    matches["dup_type"] = "rewording"
-    matches.loc[
-        matches["language_source"] != matches["language_target"], "dup_type"
-    ] = "translation"
+        matches["dup_type"] = "rewording"
+        matches.loc[
+            matches["language_source"] != matches["language_target"], "dup_type"
+        ] = "translation"
 
-    matches.loc[matches.dup_type == "rewording", "score_lev"] = matches.loc[
-        matches.dup_type == "rewording"
-    ].apply(
-        lambda x: similarity_levenshtein(
-            (x["text_grapheme_source"], x["text_grapheme_target"])
-        ),
-        axis=1,
-    )
-    matches.loc[matches.score_lev > threshold_grapheme, "dup_type"] = "copy-pasta"
+        # Compute Levenshtein scores for all potential matches
+        score_lev_list = []
+        for idx, row in matches.iterrows():
+            score = similarity_levenshtein(
+                (row["text_grapheme_source"], row["text_grapheme_target"])
+            )
+            score_lev_list.append(score)
+        
+        matches["score_lev"] = score_lev_list
+        
+        # Classify as copy-pasta based on high grapheme similarity
+        matches.loc[matches.score_lev > threshold_grapheme, "dup_type"] = "copy-pasta"
 
-    matches_strict = matches[
-        ((matches.score > threshold_semantic) & (matches.dup_type == "rewording"))
-        | ((matches.score > threshold_language) & (matches.dup_type == "translation"))
-        | (matches.dup_type == "copy-pasta")
-    ]
+        # Original filtering logic using semantic scores
+        matches_strict = matches[
+            ((matches.score > threshold_semantic) & (matches.dup_type == "rewording"))
+            | ((matches.score > threshold_language) & (matches.dup_type == "translation"))
+            | (matches.dup_type == "copy-pasta")
+        ]
 
     return matches_strict
+
+
 
 
 def create_dataset_clusters(dataset: pd.DataFrame, edgelist: pd.DataFrame):
@@ -507,14 +599,15 @@ def semantic_faiss(
             - original: text original
             - language (optional): language of each text. If not given, language detection is computed in order to detect translation
         min_size_txt (int): minimal size of text in order to apply 3 delta. if texts too short, removing document.
-        df_embeddings_use (pd.DataFrame): embeddings dataframe already saved in order not to compute embeddings everytime.
+        df_embeddings_use (pd.DataFrame or str): embeddings dataframe already saved in order not to compute embeddings everytime. 
+                                                 If "skip", semantic distance computation is skipped entirely.
         embeddings_to_save (str): name of pickle to save the embeddings if the user wants to save the embeddings.
         threshold_grapheme (float): threshold to detect copypasta with levenshtein on matches found with faiss. Defaults to 0.693.
         threshold_language (float): threshold to find matches between 2 documents for translation. Defaults to 0.715.
         threshold_semantic (float): threshold to find matches between 2 documents for rewording. Defaults to 0.85.
     Return:
         matches (pd.DataFrame): dataframe containing pairs of text detected as duplicate contents from 3 delta
-        df_cluster (pd.DataFrame): initial dataframe 'df' with its cluster of duplicated content associated if it exists. ATTENTION: empty placeholder in "light version"!
+        df_cluster (pd.DataFrame): initial dataframe 'df' with its cluster of duplicated content associated if it exists.
     """
 
     df = prepare_dataset(df, min_size_txt=min_size_txt)
@@ -523,15 +616,22 @@ def semantic_faiss(
         print("language detection")
         df = compute_language(df)
 
-    if df_embeddings_use is None:
-        df_embeddings_use = compute_embeddings(df)
-        if embeddings_to_save is not None:
-            df_embeddings_use.to_pickle(f"{embeddings_to_save}.pkl")
+    # Check if semantic distance should be skipped
+    skip_semantic = df_embeddings_use == "skip"
+    
+    if skip_semantic:
+        print("Skipping semantic distance computation as requested...")
+        res = find_matches_without_embeddings(df, threshold_grapheme)
+    else:
+        if df_embeddings_use is None:
+            df_embeddings_use = compute_embeddings(df)
+            if embeddings_to_save is not None:
+                df_embeddings_use.to_pickle(f"{embeddings_to_save}.pkl")
 
-    index_faiss = create_index_cosine(df_embeddings_use)
+        index_faiss = create_index_cosine(df_embeddings_use)
 
-    threshold_faiss = min(threshold_language, threshold_semantic)
-    res = find_matches(df_embeddings_use, index_faiss, threshold=threshold_faiss)
+        threshold_faiss = min(threshold_language, threshold_semantic)
+        res = find_matches(df_embeddings_use, index_faiss, threshold=threshold_faiss)
 
     if remove_matches_same_user is not None:
         columns_join = [
@@ -558,6 +658,7 @@ def semantic_faiss(
         threshold_grapheme=threshold_grapheme,
         threshold_language=threshold_language,
         threshold_semantic=threshold_semantic,
+        skip_semantic=skip_semantic,
     )
 
     if remove_matches_same_user is not None:
@@ -566,9 +667,9 @@ def semantic_faiss(
             != matches[remove_matches_same_user + "_target"]
         ]
 
-    df_cluster = ""
+    df_clusters = create_dataset_clusters(df, matches)
 
-    return matches, df_cluster
+    return matches, df_clusters
 
 #### STUFF ADDED BY SAVA
 
