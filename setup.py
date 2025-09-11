@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='astrodetection',
-    version='0.1.1',
+    version='0.1.2',
     description='Una libreria per analisi di dati',
     author='Il tuo nome',
     author_email='tuo@email.com',
