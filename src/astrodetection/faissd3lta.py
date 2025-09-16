@@ -631,7 +631,7 @@ def semantic_faiss(
         df = compute_language(df)
 
     # Check if semantic distance should be skipped
-    skip_semantic = df_embeddings_use == "skip"
+    skip_semantic = (type(df_embeddings_use) == str and df_embeddings_use == "skip")
     
     if skip_semantic:
         print("Skipping semantic distance computation as requested...")
