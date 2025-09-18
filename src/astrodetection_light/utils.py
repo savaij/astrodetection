@@ -4,6 +4,7 @@ from collections import Counter
 import re
 import networkx as nx
 from ipysigma import Sigma
+from typing import Iterable, Optional, Dict, Union
 
 def copypasta_score(matches, df, threshold=1):
     """
@@ -222,62 +223,123 @@ def create_network(
     likes_col: str = 'likes_count',
     tweet_date_col: str = 'tweet_date',
     link_col: str = 'link_tweet',
-    label: str = 'text'
+    label: str = 'text',
+    # NEW: flexible extra metadata controls
+    extra_meta: Union[str, Iterable[str]] = None,           # "*" => include all other columns
+    exclude_meta: Optional[Iterable[str]] = None,          # columns to skip
+    extra_meta_prefix: Optional[str] = None,               # e.g., "meta_"
+    extra_meta_rename: Optional[Dict[str, str]] = None,    # rename extras {old:new}
+    keep_na: bool = False                                  # drop None/NaN extras by default
 ):
     """
     Create a directed graph representing tweet relationships and metadata.
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     match_df : pd.DataFrame
-        DataFrame containing matched tweet pairs with the following REQUIRED columns (fixed schema):
-            - 'source'
-            - 'target'
-            - 'text_to_embed_source'
-            - 'text_to_embed_target'
-            - 'score'
+        REQUIRED columns (fixed schema):
+            - 'source', 'target', 'text_to_embed_source', 'text_to_embed_target', 'score'
             - 'dup_type' (optional)
 
     metadata_df : pd.DataFrame
-        DataFrame indexed by tweet ID with (optionally) the following columns (names overridable):
+        Indexed by tweet ID. May include:
             - username_col (default 'username')
             - likes_col (default 'likes_count')
             - tweet_date_col (default 'tweet_date')
             - link_col (default 'link_tweet')
-        Missing columns or missing index entries are tolerated and replaced with None.
+        Missing columns or index entries are tolerated and replaced with None.
 
-    Parameters (extra):
-        label (str): 'text' (default) -> node label is tweet text; 'author' -> node label is author username and tweet text stored under key 'text'.
+    label : {'text','author'}, default 'text'
+        Node label selection. If 'author', tweet text is stored under key 'text'.
 
-    Returns:
-    --------
+    Flexible extras
+    ---------------
+    extra_meta : {'*' or iterable of column names}, default None
+        Include arbitrary extra columns from metadata_df as node attributes.
+    exclude_meta : iterable of column names to exclude from extras.
+    extra_meta_prefix : optional prefix for extra keys to avoid name collisions.
+    extra_meta_rename : dict mapping {original_column: new_key_name}.
+    keep_na : bool, default False
+        If False, drop extras whose value is None/NaN.
+
+    Returns
+    -------
     Sigma
         A Sigma visualization object representing the network.
     """
-
     graph = nx.DiGraph()
 
     if label not in {"text", "author"}:
         raise ValueError("label must be either 'text' or 'author'")
 
+    # Helper: safely pull a scalar value from metadata_df for a node/column
     def _safe_meta(node_id, col_name):
         if col_name in metadata_df.columns and node_id in metadata_df.index:
             value = metadata_df.loc[node_id, col_name]
-            # In case of duplicated index returning a Series
+            # Handle duplicate index -> Series/DataFrame cases
             if isinstance(value, pd.Series):
-                return value.iloc[0]
+                value = value.iloc[0]
             return value
         return None
 
-    for _, row in match_df.iterrows():
-        source_id = row['source']
-        target_id = row['target']
+    # Helper: safely pull a whole row (Series) for extras
+    def _safe_row(node_id) -> pd.Series:
+        if node_id not in metadata_df.index:
+            return pd.Series(dtype=object)
+        row = metadata_df.loc[node_id]
+        if isinstance(row, pd.DataFrame):  # duplicated index -> take first row
+            row = row.iloc[0]
+        return row
 
-        # Extract metadata common pieces
+    # Decide which extra columns to include
+    std_cols = {username_col, likes_col, tweet_date_col, link_col}
+    exclude_meta = set(exclude_meta or [])
+    rename_map = dict(extra_meta_rename or {})
+
+    if extra_meta == "*":
+        candidate_cols = set(metadata_df.columns) - std_cols
+    elif extra_meta is None:
+        candidate_cols = set()
+    else:
+        candidate_cols = set(extra_meta) - std_cols
+
+    candidate_cols -= exclude_meta
+    # Ensure we don't collide with existing keys we set explicitly
+    reserved_keys = {"label", "author", "text", "likes", "time", "link"}
+
+    def _extract_extras(node_id) -> Dict[str, object]:
+        row = _safe_row(node_id)
+        if row.empty:
+            return {}
+        extras = {}
+        for col in candidate_cols:
+            if col not in row.index:
+                continue
+            v = row[col]
+            # Normalize pandas-y values
+            if isinstance(v, pd.Timestamp):
+                v = v.isoformat()
+            elif pd.isna(v):
+                v = None
+            key = rename_map.get(col, col)
+            if extra_meta_prefix:
+                key = f"{extra_meta_prefix}{key}"
+            # Avoid collisions with our reserved keys
+            if key in reserved_keys:
+                key = f"extra_{key}"
+            if v is None and not keep_na:
+                continue
+            extras[key] = v
+        return extras
+
+    for _, r in match_df.iterrows():
+        source_id = r['source']
+        target_id = r['target']
+
         source_author = _safe_meta(source_id, username_col)
         target_author = _safe_meta(target_id, username_col)
-        source_text = row['text_to_embed_source']
-        target_text = row['text_to_embed_target']
+        source_text = r['text_to_embed_source']
+        target_text = r['text_to_embed_target']
 
         if label == 'text':
             source_data = {
@@ -285,14 +347,14 @@ def create_network(
                 "author": source_author,
                 "likes": _safe_meta(source_id, likes_col),
                 "time": _safe_meta(source_id, tweet_date_col),
-                "link": _safe_meta(source_id, link_col)
+                "link": _safe_meta(source_id, link_col),
             }
             target_data = {
                 "label": target_text,
                 "author": target_author,
                 "likes": _safe_meta(target_id, likes_col),
                 "time": _safe_meta(target_id, tweet_date_col),
-                "link": _safe_meta(target_id, link_col)
+                "link": _safe_meta(target_id, link_col),
             }
         else:  # label == 'author'
             source_data = {
@@ -301,31 +363,32 @@ def create_network(
                 "text": source_text,
                 "likes": _safe_meta(source_id, likes_col),
                 "time": _safe_meta(source_id, tweet_date_col),
-                "link": _safe_meta(source_id, link_col)
+                "link": _safe_meta(source_id, link_col),
             }
-            
             target_data = {
                 "label": target_author,
                 "author": target_author,
                 "text": target_text,
                 "likes": _safe_meta(target_id, likes_col),
                 "time": _safe_meta(target_id, tweet_date_col),
-                "link": _safe_meta(target_id, link_col)
+                "link": _safe_meta(target_id, link_col),
             }
 
-        # Add nodes to graph
+        # Merge in extra metadata (arbitrary columns)
+        source_data.update(_extract_extras(source_id))
+        target_data.update(_extract_extras(target_id))
+
+        # Add nodes/edges
         graph.add_node(source_id, **source_data)
         graph.add_node(target_id, **target_data)
 
-        # Add directed edge with duplication type and similarity score
         graph.add_edge(
             source_id,
             target_id,
-            dup_type=row.get('dup_type', "default"),
-            weight=row['score']
+            dup_type=r.get('dup_type', "default"),
+            weight=r['score'],
         )
 
-    # Create Sigma visualization
     sigma_viz = Sigma(
         graph,
         edge_color="dup_type",
@@ -333,5 +396,4 @@ def create_network(
         node_size="likes",
         node_size_range=(3, 15),
     )
-
     return sigma_viz
