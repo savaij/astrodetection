@@ -146,6 +146,26 @@ def default_handle_score(df: pd.DataFrame, num_digits: int = 5, username_col: st
 
     return n_true
 
+def check_recent_account(
+    df: pd.DataFrame, 
+    account_creation_col: str = 'createdDate',
+    tweet_date_col: str = 'tweet_date',
+    age_days_threshold: int = 1000
+    ):
+    """
+    Calculate the percentage of accounts created within a certain number of days before the tweet date.
+    """
+    df[tweet_date_col] = pd.to_datetime(df[tweet_date_col]).dt.tz_localize(None)
+    df[account_creation_col] = pd.to_datetime(df[account_creation_col]).dt.tz_localize(None)
+
+    delta_days = (df[tweet_date_col] - df[account_creation_col]).dt.days
+
+    recent_accounts = delta_days < age_days_threshold
+
+    proportion = len(df[recent_accounts]) / len(df) * 100 if len(df) > 0 else 0
+
+    return proportion
+
 def compute_bot_likelihood_metrics(
     df: pd.DataFrame,
     matches: pd.DataFrame = None,
@@ -153,13 +173,16 @@ def compute_bot_likelihood_metrics(
     num_digits: int = 5,
     top_x_percent: int = 1,
     over_post_per_day_threshold: int = 70,
+    age_days_threshold: int = 1000
     # Column name overrides (keep defaults for backwards compatibility)
     username_col: str = 'username',
     followers_col: str = 'followers',
     following_col: str = 'following',
     bio_col: str = 'bio',
     avatar_col: str = 'avatar',
-    tweets_per_day_col: str = 'tweets_per_day'
+    tweets_per_day_col: str = 'tweets_per_day',
+    account_creation_col: str = 'createdDate',
+    tweet_date_col: str = 'tweet_date',
 ) -> dict:
     """
     Combina diverse metriche per stimare la probabilità che un insieme di account sia composto da bot.
@@ -210,7 +233,13 @@ def compute_bot_likelihood_metrics(
     else:
         results['over_tweet_per_day (%)'] = None
 
-    #6. Support number of tweets
+    # 6. Recent Account Creation
+    if account_creation_col in df.columns and tweet_date_col in df.columns:
+        results['recent_account_creation (%)'] = round(check_recent_account(df, account_creation_col=account_creation_col, tweet_date_col=tweet_date_col, age_days_threshold=age_days_threshold), 2)
+    else:
+        results['recent_account_creation (%)'] = None
+
+    # 7. Support number of tweets
     results['number_of_tweets'] = len(df)
 
     return results
