@@ -166,6 +166,19 @@ def check_recent_account(
 
     return proportion
 
+def check_creation_week_cluster(
+    df: pd.DataFrame, 
+    account_creation_col: str = 'createdDate', 
+    n_weeks: int = 4
+) -> float:
+
+    creation_weeks = df[account_creation_col].dt.to_period('W')
+    week_counts = creation_weeks.value_counts()
+
+    return week_counts[:n_weeks].sum() / len(df) * 100 if len(df) > 0 else 0
+
+
+
 def compute_bot_likelihood_metrics(
     df: pd.DataFrame,
     matches: pd.DataFrame = None,
@@ -174,6 +187,7 @@ def compute_bot_likelihood_metrics(
     top_x_percent: int = 1,
     over_post_per_day_threshold: int = 70,
     age_days_threshold: int = 1000,
+    n_weeks: int = 4,
     # Column name overrides (keep defaults for backwards compatibility)
     username_col: str = 'username',
     followers_col: str = 'followers',
@@ -238,8 +252,14 @@ def compute_bot_likelihood_metrics(
         results['recent_account_creation (%)'] = round(check_recent_account(df, account_creation_col=account_creation_col, tweet_date_col=tweet_date_col, age_days_threshold=age_days_threshold), 2)
     else:
         results['recent_account_creation (%)'] = None
+    
+    # 7. Account Creation weeks clusters
+    if account_creation_col in df.columns:
+        results['top_creation_weeks (%)'] = round(check_creation_week_cluster(df, account_creation_col=account_creation_col, n_weeks=n_weeks), 2)
+    else:
+        results['top_creation_weeks (%)'] = None
 
-    # 7. Support number of tweets
+    # 8. Support number of tweets
     results['number_of_tweets'] = len(df)
 
     return results
