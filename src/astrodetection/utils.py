@@ -173,7 +173,7 @@ def compute_bot_likelihood_metrics(
     num_digits: int = 5,
     top_x_percent: int = 1,
     over_post_per_day_threshold: int = 70,
-    age_days_threshold: int = 1000
+    age_days_threshold: int = 1000,
     # Column name overrides (keep defaults for backwards compatibility)
     username_col: str = 'username',
     followers_col: str = 'followers',
