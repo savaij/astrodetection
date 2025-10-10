@@ -153,7 +153,7 @@ def check_recent_account(
     df: pd.DataFrame, 
     account_creation_col: str = 'createdDate',
     tweet_date_col: str = 'tweet_date',
-    age_days_threshold: int = 1000,
+    age_days_threshold: int = 30,
     username_col: str = 'username'
     ):
     """
@@ -195,7 +195,7 @@ def compute_bot_likelihood_metrics(
     num_digits: int = 5,
     top_x_percent: int = 1,
     over_post_per_day_threshold: int = 70,
-    age_days_threshold: int = 1000,
+    age_days_threshold: int = 30,
     n_weeks: int = 4,
     # Column name overrides (keep defaults for backwards compatibility)
     username_col: str = 'username',
