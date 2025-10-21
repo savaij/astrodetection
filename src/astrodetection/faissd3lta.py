@@ -482,7 +482,7 @@ def find_matches_without_embeddings(
 
 def similarity_levenshtein(pair):
     s1, s2 = pair
-    return 1 - levenshtein(s1, s2) / max(len(s1), len(s2))
+    return 1 - levenshtein(s1, s2) / max(len(s1), len(s2)) if max(len(s1), len(s2)) > 0 else 0
 
 
 @timeit
