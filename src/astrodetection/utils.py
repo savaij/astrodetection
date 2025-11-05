@@ -186,7 +186,41 @@ def check_creation_week_cluster(
 
     return week_counts[:n_weeks].sum() / len(df_unique) * 100 if len(df_unique) > 0 else 0
 
+def _check_excessive_tags(tweet, threshold=4):
+    """
+    Check if a tweet has more than a specified number of people tagged.
+    
+    Args:
+        tweet (str): The tweet text to analyze.
+        threshold (int): Maximum number of tags allowed (default: 4).
+        
+    Returns:
+        bool: True if the tweet has more than threshold tags, False otherwise.
+    """
+    import re
+    # Find all @mentions in the tweet using Twitter's username rules
+    # Pattern matches @ followed by 1-15 alphanumeric characters or underscores
+    # (?<!\w) ensures @ is not preceded by a word character
+    tags = re.findall(r'(?<!\w)@([a-z0-9_]{1,15})', tweet.lower())
+    
+    return len(tags) > threshold
 
+def excessive_tags_score(
+    df: pd.DataFrame, 
+    tweet_text_col: str = 'tweet'):
+    """
+    Calculate the excessive tags score for a DataFrame of tweets.
+    
+    Args:
+        df (pd.DataFrame): DataFrame containing tweets.
+        tweet_text_col (str): Name of the column with tweet texts.
+        
+    Returns:
+        float: Proportion of tweets with excessive tags.
+    """
+    excessive_tagged = df[tweet_text_col].apply(_check_excessive_tags)
+    score = excessive_tagged.sum() / len(df) * 100
+    return score
 
 def compute_bot_likelihood_metrics(
     df: pd.DataFrame,
@@ -206,6 +240,7 @@ def compute_bot_likelihood_metrics(
     tweets_per_day_col: str = 'tweets_per_day',
     account_creation_col: str = 'createdDate',
     tweet_date_col: str = 'tweet_date',
+    tweet_text_col: str = 'tweet'
 ) -> dict:
     """
     Combina diverse metriche per stimare la probabilità che un insieme di account sia composto da bot.
@@ -267,8 +302,14 @@ def compute_bot_likelihood_metrics(
         results['top_creation_weeks (%)'] = round(check_creation_week_cluster(df, account_creation_col=account_creation_col, n_weeks=n_weeks, username_col=username_col), 2)
     else:
         results['top_creation_weeks (%)'] = None
+    
+    # 8. Excessive Tags Score
+    if tweet_text_col in df.columns:
+        results['excessive_tags_score (%)'] = round(excessive_tags_score(df, tweet_text_col=tweet_text_col), 2)
+    else:
+        results['excessive_tags_score (%)'] = None
 
-    # 8. Support number of tweets
+    # 9. Support number of tweets
     results['number_of_tweets'] = len(df)
 
     return results
