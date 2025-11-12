@@ -69,7 +69,7 @@ def calculate_zero_fw_score(df: pd.DataFrame, followers_col: str = 'followers', 
     Returns:
         tuple: (name, zero_score_percent) where zero_score_percent is rounded to 4 decimal places.
     """
-    df_unique = df.drop_duplicates(subset=[username_col])
+    df_unique = df.drop_duplicates(subset=[username_col]).copy()
     mask = (df_unique[followers_col] < 1) & (df_unique[following_col] < 1)
     zero_score = len(df_unique[mask]) / len(df_unique) * 100 if len(df_unique) > 0 else 0
 
@@ -87,7 +87,7 @@ def no_image_description_score(df: pd.DataFrame, bio_col: str = 'bio', avatar_co
         tuple: (name, no_image_description_percent) where the percent is rounded to 4 decimal places.
     """
 
-    df_unique = df.drop_duplicates(subset=[username_col])
+    df_unique = df.drop_duplicates(subset=[username_col]).copy()
 
     mask_desc = (df_unique[bio_col] == "") | (df_unique[bio_col].isna())
 
@@ -110,7 +110,7 @@ def over_tot_post_per_day(df: pd.DataFrame, threshold: int = 70, tweets_per_day_
         df (pd.DataFrame): The input DataFrame, which must have 'tweet_per_day' column
         threshold (int): The minimum number of posts per day to consider. Default is 70
     """
-    df_unique = df.drop_duplicates(subset=[username_col])
+    df_unique = df.drop_duplicates(subset=[username_col]).copy()
     mask = df_unique[tweets_per_day_col] > threshold
     return mask.value_counts(normalize=True).get(True, 0) * 100
 
@@ -139,7 +139,7 @@ def default_handle_score(df: pd.DataFrame, num_digits: int = 5, username_col: st
     Returns:
         tuple: (name, default_handle_percent) rounded to 2 decimal places.
     """
-    df_unique = df.drop_duplicates(subset=[username_col])
+    df_unique = df.drop_duplicates(subset=[username_col]).copy()
 
     matches = df_unique[username_col].apply(lambda x: _check_username_digits(x, num_digits))
     if matches.any():
@@ -159,7 +159,7 @@ def check_recent_account(
     """
     Calculate the percentage of accounts created within a certain number of days before the tweet date.
     """
-    df_unique = df.drop_duplicates(subset=[username_col])
+    df_unique = df.drop_duplicates(subset=[username_col]).copy()
     df_unique[tweet_date_col] = pd.to_datetime(df_unique[tweet_date_col]).dt.tz_localize(None)
     df_unique[account_creation_col] = pd.to_datetime(df_unique[account_creation_col]).dt.tz_localize(None)
 
@@ -180,13 +180,47 @@ def check_creation_week_cluster(
     """
     Calculate the percentage of accounts created within the top N most common account creation weeks.
     """
-    df_unique = df.drop_duplicates(subset=[username_col])
+    df_unique = df.drop_duplicates(subset=[username_col]).copy()
     creation_weeks = df_unique[account_creation_col].dt.to_period('W')
     week_counts = creation_weeks.value_counts()
 
     return week_counts[:n_weeks].sum() / len(df_unique) * 100 if len(df_unique) > 0 else 0
 
+def _check_excessive_tags(tweet, threshold=4):
+    """
+    Check if a tweet has more than a specified number of people tagged.
+    
+    Args:
+        tweet (str): The tweet text to analyze.
+        threshold (int): Maximum number of tags allowed (default: 4).
+        
+    Returns:
+        bool: True if the tweet has more than threshold tags, False otherwise.
+    """
+    import re
+    # Find all @mentions in the tweet using Twitter's username rules
+    # Pattern matches @ followed by 1-15 alphanumeric characters or underscores
+    # (?<!\w) ensures @ is not preceded by a word character
+    tags = re.findall(r'(?<!\w)@([a-z0-9_]{1,15})', tweet.lower())
+    
+    return len(tags) > threshold
 
+def excessive_tags_score(
+    df: pd.DataFrame, 
+    tweet_text_col: str = 'tweet'):
+    """
+    Calculate the excessive tags score for a DataFrame of tweets.
+    
+    Args:
+        df (pd.DataFrame): DataFrame containing tweets.
+        tweet_text_col (str): Name of the column with tweet texts.
+        
+    Returns:
+        float: Proportion of tweets with excessive tags.
+    """
+    excessive_tagged = df[tweet_text_col].apply(_check_excessive_tags)
+    score = excessive_tagged.sum() / len(df) * 100
+    return score
 
 def compute_bot_likelihood_metrics(
     df: pd.DataFrame,
@@ -206,6 +240,7 @@ def compute_bot_likelihood_metrics(
     tweets_per_day_col: str = 'tweets_per_day',
     account_creation_col: str = 'createdDate',
     tweet_date_col: str = 'tweet_date',
+    tweet_text_col: str = 'tweet'
 ) -> dict:
     """
     Combina diverse metriche per stimare la probabilità che un insieme di account sia composto da bot.
@@ -267,8 +302,14 @@ def compute_bot_likelihood_metrics(
         results['top_creation_weeks (%)'] = round(check_creation_week_cluster(df, account_creation_col=account_creation_col, n_weeks=n_weeks, username_col=username_col), 2)
     else:
         results['top_creation_weeks (%)'] = None
+    
+    # 8. Excessive Tags Score
+    if tweet_text_col in df.columns:
+        results['excessive_tags_score (%)'] = round(excessive_tags_score(df, tweet_text_col=tweet_text_col), 2)
+    else:
+        results['excessive_tags_score (%)'] = None
 
-    # 8. Support number of tweets
+    # 9. Support number of tweets
     results['number_of_tweets'] = len(df)
 
     return results
