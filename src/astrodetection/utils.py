@@ -222,37 +222,6 @@ def excessive_tags_score(
     score = excessive_tagged.sum() / len(df) * 100
     return score
 
-def extract_media_ratio(
-    df, 
-    media_list_generaliste, 
-    media_list_independant, 
-    username_col: str = 'username'):
-    """
-    Extract the ratio of posts from generalist media and independent media.
-
-    Parameters:
-        df (pd.DataFrame): DataFrame containing posts with a 'username' column.
-        media_list_generaliste (set): Set of usernames considered as generalist media.
-        media_list_independant (set): Set of usernames considered as independent media.
-        username_col (str): Column name containing the user handle. Defaults to 'username'.
-    Returns:
-        float: Ratio of posts from independent media / generalist media.
-    """
-
-    total_posts = len(df)
-    if total_posts == 0:
-        return None
-    
-    posts_by_generaliste = df['username'].str.lower().isin(media_list_generaliste)
-    posts_by_independant = df['username'].str.lower().isin(media_list_independant)
-
-    num_generaliste = posts_by_generaliste.sum()
-    num_independant = posts_by_independant.sum()
-
-    ratio_independant_general = num_independant / num_generaliste if num_generaliste != 0 else None
-
-    return ratio_independant_general
-
 def compute_bot_likelihood_metrics(
     df: pd.DataFrame,
     matches: pd.DataFrame = None,
@@ -262,8 +231,6 @@ def compute_bot_likelihood_metrics(
     over_post_per_day_threshold: int = 70,
     age_days_threshold: int = 30,
     n_weeks: int = 4,
-    media_list_generaliste: list = None,
-    media_list_independant: list = None,
     # Column name overrides (keep defaults for backwards compatibility)
     username_col: str = 'username',
     followers_col: str = 'followers',
@@ -341,13 +308,6 @@ def compute_bot_likelihood_metrics(
         results['excessive_tags_score (%)'] = round(excessive_tags_score(df, tweet_text_col=tweet_text_col), 2)
     else:
         results['excessive_tags_score (%)'] = None
-    
-    # 9. Media Ratio
-    if media_list_generaliste is not None and media_list_independant is not None and username_col in df.columns:
-        ratio_media = extract_media_ratio(df, set(media_list_generaliste), set(media_list_independant), username_col=username_col)
-        results['independent_to_generalist_media_ratio'] = round(ratio_media, 4) if ratio_media is not None else None
-    else:
-        results['independent_to_generalist_media_ratio'] = None
 
     # 9. Support number of tweets
     results['number_of_tweets'] = len(df)
