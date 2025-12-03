@@ -687,20 +687,22 @@ def semantic_faiss(
 
 ### STUFF ADDED BY SAVA
 
-def prepare_input_data(dataframe, embeddings=None, model=None):
+def prepare_input_data(dataframe, embeddings=None, model=None, tweet_column="tweet"):
     """
     Prepares a filtered DataFrame and its corresponding embedding DataFrame.
 
     Parameters:
     ----------
     dataframe : pd.DataFrame
-        Input DataFrame expected to contain a 'tweet' column.
+        Input DataFrame expected to contain a tweet_column column.
     embeddings : np.ndarray, pd.Series, or None, optional
         Precomputed embeddings for the 'tweet' column. If None, embeddings
         will be computed using the provided `model`.
     model : object, optional
         A model with an `.encode()` method that converts a list of texts
         into their embedding vectors. Required if `embeddings` is None.
+    tweet_column : str
+        Name of column with tweet texts. Default: "tweet".
 
     Returns:
     -------
@@ -709,12 +711,12 @@ def prepare_input_data(dataframe, embeddings=None, model=None):
     pd.DataFrame
         A DataFrame of corresponding embeddings with aligned index.
     """
-    tweets_df = dataframe[['tweet']].copy()
+    tweets_df = dataframe[[tweet_column]].copy()
 
     if embeddings is None:
         if model is None:
             raise ValueError("Either `embeddings` must be provided or `model` must be specified.")
-        embeddings = model.encode(tweets_df['tweet'].tolist())
+        embeddings = model.encode(tweets_df[tweet_column].tolist())
 
     if isinstance(embeddings, pd.Series):
         embeddings.index = embeddings.index.astype(str)
