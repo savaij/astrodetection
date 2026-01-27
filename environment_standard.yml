@@ -9,7 +9,6 @@ dependencies:
   - gensim
   - networkx
   - pandas
-  - polyleven
   - scipy
   - requests
   - tqdm
@@ -17,3 +16,4 @@ dependencies:
   - pip:
       - git+https://github.com/savaij/astrodetection.git
       - ipysigma
+      - polyleven
