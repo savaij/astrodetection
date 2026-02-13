@@ -69,9 +69,10 @@ def calculate_zero_fw_score(df: pd.DataFrame, followers_col: str = 'followers', 
     Returns:
         tuple: (name, zero_score_percent) where zero_score_percent is rounded to 4 decimal places.
     """
-    df_unique = df.drop_duplicates(subset=[username_col]).copy()
-    mask = (df_unique[followers_col] < 1) & (df_unique[following_col] < 1)
-    zero_score = len(df_unique[mask]) / len(df_unique) * 100 if len(df_unique) > 0 else 0
+   # df_unique = df.drop_duplicates(subset=[username_col]).copy()
+
+    mask = (df[followers_col] < 1) & (df[following_col] < 1)
+    zero_score = len(df[mask]) / len(df) * 100 if len(df) > 0 else 0
 
     return zero_score
 
@@ -87,18 +88,18 @@ def no_image_description_score(df: pd.DataFrame, bio_col: str = 'bio', avatar_co
         tuple: (name, no_image_description_percent) where the percent is rounded to 4 decimal places.
     """
 
-    df_unique = df.drop_duplicates(subset=[username_col]).copy()
+    #df_unique = df.drop_duplicates(subset=[username_col]).copy()
 
-    mask_desc = (df_unique[bio_col] == "") | (df_unique[bio_col].isna())
+    mask_desc = (df[bio_col] == "") | (df[bio_col].isna())
 
     mask_image = (
-        (df_unique[avatar_col] == 'https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png') |
-        (df_unique[avatar_col] == '') |
-        (df_unique[avatar_col].isna())
+        (df[avatar_col] == 'https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png') |
+        (df[avatar_col] == '') |
+        (df[avatar_col].isna())
     )
 
     mask = mask_desc & mask_image
-    zero_score = len(df_unique[mask]) / len(df_unique) * 100 if len(df_unique) > 0 else 0
+    zero_score = len(df[mask]) / len(df) * 100 if len(df) > 0 else 0
 
     return zero_score
 
@@ -110,8 +111,8 @@ def over_tot_post_per_day(df: pd.DataFrame, threshold: int = 70, tweets_per_day_
         df (pd.DataFrame): The input DataFrame, which must have 'tweet_per_day' column
         threshold (int): The minimum number of posts per day to consider. Default is 70
     """
-    df_unique = df.drop_duplicates(subset=[username_col]).copy()
-    mask = df_unique[tweets_per_day_col] > threshold
+    #df_unique = df.drop_duplicates(subset=[username_col]).copy()
+    mask = df[tweets_per_day_col] > threshold
     return mask.value_counts(normalize=True).get(True, 0) * 100
 
 def _check_username_digits(username: str, num_digits: int) -> bool:
@@ -139,9 +140,9 @@ def default_handle_score(df: pd.DataFrame, num_digits: int = 5, username_col: st
     Returns:
         tuple: (name, default_handle_percent) rounded to 2 decimal places.
     """
-    df_unique = df.drop_duplicates(subset=[username_col]).copy()
+    #df_unique = df.drop_duplicates(subset=[username_col]).copy()
 
-    matches = df_unique[username_col].apply(lambda x: _check_username_digits(x, num_digits))
+    matches = df[username_col].apply(lambda x: _check_username_digits(x, num_digits))
     if matches.any():
         n_true = matches.value_counts(normalize=True).get(True, 0) * 100
     else:
@@ -159,15 +160,15 @@ def check_recent_account(
     """
     Calculate the percentage of accounts created within a certain number of days before the tweet date.
     """
-    df_unique = df.drop_duplicates(subset=[username_col]).copy()
-    df_unique[tweet_date_col] = pd.to_datetime(df_unique[tweet_date_col]).dt.tz_localize(None)
-    df_unique[account_creation_col] = pd.to_datetime(df_unique[account_creation_col]).dt.tz_localize(None)
+    #df_unique = df.drop_duplicates(subset=[username_col]).copy()
+    df[tweet_date_col] = pd.to_datetime(df[tweet_date_col]).dt.tz_localize(None)
+    df[account_creation_col] = pd.to_datetime(df[account_creation_col]).dt.tz_localize(None)
 
-    delta_days = (df_unique[tweet_date_col] - df_unique[account_creation_col]).dt.days
+    delta_days = (df[tweet_date_col] - df[account_creation_col]).dt.days
 
     recent_accounts = delta_days < age_days_threshold
 
-    proportion = len(df_unique[recent_accounts]) / len(df_unique) * 100 if len(df_unique) > 0 else 0
+    proportion = len(df[recent_accounts]) / len(df) * 100 if len(df) > 0 else 0
 
     return proportion
 
@@ -180,11 +181,11 @@ def check_creation_week_cluster(
     """
     Calculate the percentage of accounts created within the top N most common account creation weeks.
     """
-    df_unique = df.drop_duplicates(subset=[username_col]).copy()
-    creation_weeks = df_unique[account_creation_col].dt.to_period('W')
+    #df_unique = df.drop_duplicates(subset=[username_col]).copy()
+    creation_weeks = df[account_creation_col].dt.to_period('W')
     week_counts = creation_weeks.value_counts()
 
-    return week_counts[:n_weeks].sum() / len(df_unique) * 100 if len(df_unique) > 0 else 0
+    return week_counts[:n_weeks].sum() / len(df) * 100 if len(df) > 0 else 0
 
 def _check_excessive_tags(tweet, threshold=4):
     """
@@ -221,7 +222,7 @@ def excessive_tags_score(
     excessive_tagged = df[tweet_text_col].apply(_check_excessive_tags)
     score = excessive_tagged.sum() / len(df) * 100
     return score
-    
+
 def compute_bot_likelihood_metrics(
     df: pd.DataFrame,
     matches: pd.DataFrame = None,
