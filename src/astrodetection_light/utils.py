@@ -329,7 +329,8 @@ def create_network(
     exclude_meta: Optional[Iterable[str]] = None,          # columns to skip
     extra_meta_prefix: Optional[str] = None,               # e.g., "meta_"
     extra_meta_rename: Optional[Dict[str, str]] = None,    # rename extras {old:new}
-    keep_na: bool = False                                  # drop None/NaN extras by default
+    keep_na: bool = False,                                  # drop None/NaN extras by default
+    return_sigma = True
 ):
     """
     Create a directed graph representing tweet relationships and metadata.
@@ -496,4 +497,4 @@ def create_network(
         node_size="likes",
         node_size_range=(3, 15),
     )
-    return sigma_viz
+    return sigma_viz if return_sigma else graph
