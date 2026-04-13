@@ -2,12 +2,12 @@ from setuptools import setup, find_packages
 
 setup(
     name='astrodetection',
-    version='0.1.2',
+    version='0.1.3',
     description='A Python library for detecting astroturfing (coordinated inauthentic behavior) in social media posts.',
     long_description=open('README.md', encoding='utf-8').read(),
     long_description_content_type='text/markdown',
-    author='YOUR NAME',
-    author_email='YOUR@EMAIL.COM',
+    author='Francesco Savatteri',
+    author_email='astrodetection_python@proton.me',
     url='https://github.com/savaij/astrodetection',
     project_urls={
         'Bug Tracker': 'https://github.com/savaij/astrodetection/issues',

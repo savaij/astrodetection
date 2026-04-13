@@ -5,6 +5,18 @@ Astrodetection is a Python library designed for detecting astroturfing clues fro
 
 ## Installation
 
+### Pip
+
+```bash
+pip install "astrodetection[standard]"
+```
+
+or
+
+```bash
+pip install "astrodetection[light]"
+```
+
 1. Use the YAML file to configure the environment with conda:
 
    ```bash

@@ -219,6 +219,7 @@ def excessive_tags_score(
     Returns:
         float: Proportion of tweets with excessive tags.
     """
+    df = df.dropna(subset=[tweet_text_col])
     excessive_tagged = df[tweet_text_col].apply(_check_excessive_tags)
     score = excessive_tagged.sum() / len(df) * 100
     return score
