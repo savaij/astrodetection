@@ -17,6 +17,8 @@ or
 pip install "astrodetection[light]"
 ```
 
+### Conda
+
 1. Use the YAML file to configure the environment with conda:
 
    ```bash
