@@ -20,7 +20,6 @@ def copypasta_score(matches, df, threshold=1):
     Parameters:
         matches (pd.DataFrame): Must contain 'source' and 'target' columns.
         df (pd.DataFrame): Original DataFrame to evaluate.
-        df_integral (object): Object with a `.name` attribute used as a key in the result.
         threshold (int): Minimum number of occurrences to consider a match.
 
     Returns:
@@ -269,7 +268,7 @@ def get_similarity_hub_score(G_sharing, df, threshold=0.9, username_col="screen 
     communities = community.greedy_modularity_communities(G_sharing, weight='weight')
     
 
-    largest_community_size = len(communities[0])
+    largest_community_size = len(communities[0] if communities else [])
 
     if type_col:
         n_users = df[df[type_col]=='retweet'][username_col].nunique()

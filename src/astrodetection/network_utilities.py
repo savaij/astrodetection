@@ -10,11 +10,11 @@ from sklearn.metrics.pairwise import cosine_similarity
 from ipysigma import Sigma
 
 
-def create_coSharing_graph(data, type_column='row_type', userid_col='screen name', feature_col='retweeted user', min_overlap=3):
+def create_coSharing_graph(data, type_column='row_type', userid_col='screen name', feature_col='retweeted user', min_retweets=2, min_overlap=3):
     """
     Build a co-sharing similarity graph among users based on shared retweet targets.
 
-    Each node represents an active user (more than 2 total retweets). An edge between
+    Each node represents an active user (more than `min_retweets` total retweets). An edge between
     two users is added when they share at least `min_overlap` retweeted accounts in
     common, weighted by the TF-IDF cosine similarity of their retweet vectors.
 
@@ -23,7 +23,7 @@ def create_coSharing_graph(data, type_column='row_type', userid_col='screen name
         2. Count how many times each user retweeted each account (frequency matrix).
         3. Compute TF-IDF weights over the full user population so that IDF reflects
            the global popularity of each retweeted account.
-        4. Restrict similarity computation to active users (> 2 total retweets).
+        4. Restrict similarity computation to active users (> `min_retweets` total retweets).
         5. Compute pairwise cosine similarity among active users' TF-IDF vectors.
         6. Apply a hard overlap filter: zero out pairs sharing fewer than `min_overlap`
            distinct retweeted accounts.
@@ -40,6 +40,9 @@ def create_coSharing_graph(data, type_column='row_type', userid_col='screen name
             Default is 'screen name'.
         feature_col (str): Name of the column containing the retweeted account identifier.
             Default is 'retweeted user'.
+        min_retweets (int): Minimum total number of retweets a user must have made to be
+            considered active and included in the similarity computation. IDF is still
+            computed over all users regardless of this threshold. Default is 2.
         min_overlap (int): Minimum number of distinct retweeted accounts that two users
             must share for an edge to be included in the graph. Default is 3.
 
@@ -68,9 +71,9 @@ def create_coSharing_graph(data, type_column='row_type', userid_col='screen name
     # Count how many times each user retweeted each account (instead of binary 1)
     data = data.groupby(['userid', 'feature_shared'], as_index=False).size().rename(columns={'size': 'value'})
 
-    # Identify active users (>2 total retweets) BEFORE filtering, so IDF is computed over all users
+    # Identify active users (>min_retweets total retweets) BEFORE filtering, so IDF is computed over all users
     user_totals = data.groupby('userid')['value'].sum()
-    active_users = set(user_totals[user_totals > 2].index.astype(str))
+    active_users = set(user_totals[user_totals > min_retweets].index.astype(str))
 
     ids = dict(zip(list(data.feature_shared.unique()), list(range(data.feature_shared.unique().shape[0]))))
     data['feature_shared'] = data['feature_shared'].apply(lambda x: ids[x]).astype(int)
