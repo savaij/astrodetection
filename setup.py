@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='astrodetection',
-    version='0.1.5',
+    version='0.1.6',
     description='A Python library for detecting astroturfing (coordinated inauthentic behavior) in social media posts.',
     long_description=open('README.md', encoding='utf-8').read(),
     long_description_content_type='text/markdown',
@@ -25,6 +25,9 @@ setup(
         'polyleven',
         'ipysigma',
         'numpy',
+        'scikit-learn',
+        'scipy'
+        
     ],
     extras_require={
         'standard': [
@@ -38,7 +41,6 @@ setup(
     },
     classifiers=[
         'Programming Language :: Python :: 3',
-        'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
         'Intended Audience :: Science/Research',
         'Topic :: Scientific/Engineering :: Information Analysis',
