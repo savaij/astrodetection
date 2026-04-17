@@ -355,7 +355,9 @@ def compute_bot_likelihood_metrics(
             - 'top_creation_weeks (%)': % of accounts created in the top `n_weeks` most common creation weeks.
             - 'excessive_tags_score (%)': % of tweets mentioning more than 4 users (@tags).
             - 'similarity_hub_score (%)': % of retweeting users belonging to the largest community in `G_sharing`.
-            - 'number_of_tweets': Total number of rows in `df`.
+            - 'number_of_original_tweets': Absolute count of rows where `type_col` == 'post', or None if `type_col` is absent.
+            - 'number_of_retweets': Absolute count of rows where `type_col` == 'retweet', or None if `type_col` is absent.
+            - 'number_of_tweets_or_retweets_with_text': Absolute count of rows with non-null `tweet_text_col`, or None if absent.
     """
 
     results = {}
@@ -417,7 +419,17 @@ def compute_bot_likelihood_metrics(
     else:
         results['similarity_hub_score (%)'] = None
 
-    # 10. Support number of tweets
-    results['number_of_tweets'] = len(df)
+    # 10. Support number of tweets and retweets
+    if type_col in df.columns:
+        results['number_of_original_tweets'] = len(df[df[type_col]=='post'])
+        results['number_of_retweets'] = len(df[df[type_col]=='retweet'])
+    else:
+        results['number_of_original_tweets'] = None
+        results['number_of_retweets'] = None
+
+    if tweet_text_col in df.columns:
+        results['number_of_tweets_or_retweets_with_text'] = len(df.dropna(subset=[tweet_text_col]))
+    else:
+        results['number_of_tweets_or_retweets_with_text'] = None
 
     return results
