@@ -419,17 +419,4 @@ def compute_bot_likelihood_metrics(
     else:
         results['similarity_hub_score (%)'] = None
 
-    # 10. Support number of tweets and retweets
-    if type_col in df.columns:
-        results['number_of_original_tweets'] = len(df[df[type_col]=='post'])
-        results['number_of_retweets'] = len(df[df[type_col]=='retweet'])
-    else:
-        results['number_of_original_tweets'] = None
-        results['number_of_retweets'] = None
-
-    if tweet_text_col in df.columns:
-        results['number_of_tweets_or_retweets_with_text'] = len(df.dropna(subset=[tweet_text_col]))
-    else:
-        results['number_of_tweets_or_retweets_with_text'] = None
-
     return results
