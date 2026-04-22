@@ -409,9 +409,14 @@ def compute_bot_likelihood_metrics(
     
     # 8. Excessive Tags Score
     if tweet_text_col in df.columns:
-        results['excessive_tags_score (%)'] = round(excessive_tags_score(df, tweet_text_col=tweet_text_col), 2)
+        results['excessive_tags_score_full_dataset (%)'] = round(excessive_tags_score(df, tweet_text_col=tweet_text_col), 2)
+
+        df_original_tweets = df[df[type_col] == 'post'] if type_col in df.columns else df
+
+        if not df_original_tweets.empty:
+            results['excessive_tags_score_original_tweets (%)'] = round(excessive_tags_score(df_original_tweets, tweet_text_col=tweet_text_col), 2)
     else:
-        results['excessive_tags_score (%)'] = None
+        results['excessive_tags_score_full_dataset (%)'] = None
     
     # 9. Similarity Hub Score
     if G_sharing is not None and username_col in df.columns:
