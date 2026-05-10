@@ -98,6 +98,10 @@ def create_coSharing_graph(data, type_column='row_type', userid_col='screen name
     userid_inv = {v: k for k, v in userid.items()}  # int index -> username
     active_indices = sorted([userid[u] for u in active_users if u in userid])
     active_usernames = [userid_inv[i] for i in active_indices]
+
+    if not active_indices:
+        return nx.Graph()
+
     tfidf_active = tfidf_matrix[active_indices, :]
 
     # --- Minimum overlap filter ---
