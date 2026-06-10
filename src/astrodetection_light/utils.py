@@ -72,7 +72,7 @@ def calculate_zero_fw_score(df: pd.DataFrame, followers_col: str = 'followers', 
                            and a 'name' attribute (either a value or a pd.Series).
     
     Returns:
-        tuple: (name, zero_score_percent) where zero_score_percent is rounded to 4 decimal places.
+        tuple: zero_score_percent where zero_score_percent is rounded to 4 decimal places.
     """
    # df_unique = df.drop_duplicates(subset=[username_col]).copy()
 
@@ -80,6 +80,23 @@ def calculate_zero_fw_score(df: pd.DataFrame, followers_col: str = 'followers', 
     zero_score = len(df[mask]) / len(df) * 100 if len(df) > 0 else 0
 
     return zero_score
+
+def calculate_low_fw_score(df: pd.DataFrame, followers_col: str = 'followers', following_col: str = 'following', username_col: str = 'username', n_followers: int = 10, n_following: int = 10) -> float:
+    """
+    Calculate the percentage of rows where both 'followers' and 'following' are less than specified thresholds.
+    
+    Parameters:
+        df (pd.DataFrame): The input DataFrame, which must have 'followers', 'following',
+                           and a 'name' attribute (either a value or a pd.Series).
+
+    Returns:
+        tuple: (name, low_fw_score_percent) where low_fw_score_percent is rounded to 4 decimal places.
+    """
+
+    mask = (df[followers_col] < n_followers) & (df[following_col] < n_following)
+    low_fw_score = len(df[mask]) / len(df) * 100 if len(df) > 0 else 0
+
+    return low_fw_score
 
 def no_image_description_score(df: pd.DataFrame, bio_col: str = 'bio', avatar_col: str = 'avatar', username_col: str = 'username') -> float:
     """
@@ -290,6 +307,8 @@ def compute_bot_likelihood_metrics(
     n_weeks: int = 4,
     G_sharing: nx.Graph = None,
     similarity_sharing_threshold: float = 0.9,
+    n_followers: int = 10,
+    n_following: int = 10,
     # Column name overrides (keep defaults for backwards compatibility)
     username_col: str = 'username',
     followers_col: str = 'followers',
@@ -372,11 +391,16 @@ def compute_bot_likelihood_metrics(
     results['top_users_count'] = top_users_n
 
     # 3. Zero Followers & Following
-    # 3. Zero Followers & Following
     if followers_col in df.columns and following_col in df.columns:
         results['zero_followers_and_following (%)'] = round(calculate_zero_fw_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col), 2)
     else:
         results['zero_followers_and_following (%)'] = None
+
+    #3.1 Low Followers & Following
+    if followers_col in df.columns and following_col in df.columns:
+        results['low_followers_and_following (%)'] = round(calculate_low_fw_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col, n_followers=n_followers, n_following=n_following), 2)
+    else:
+        results['low_followers_and_following (%)'] = None
 
     # 4. No Image and Description
     if bio_col in df.columns and avatar_col in df.columns:
