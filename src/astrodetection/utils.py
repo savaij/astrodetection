@@ -295,6 +295,55 @@ def get_similarity_hub_score(G_sharing, df, threshold=0.9, username_col="screen 
     score = largest_community_size / n_users if n_users > 0 else 0
     return score * 100
 
+def activity_distribution_skew(df, username_col: str = 'screen name', return_mode: bool = False):
+    """Measure the *shape* of the posts-per-user distribution via the skewness
+    of log10(posts per user).
+
+    Rationale:
+        Organic activity follows a heavy-tailed (power-law-like) distribution:
+        most accounts post once, a few post a lot -> the distribution is
+        RIGHT-skewed (positive skew), with the mode at ~1 post.
+        Coordinated / astroturf activity is instead a homogeneous "army" of
+        highly active accounts: the mass piles up at high activity levels and
+        the distribution becomes LEFT-skewed (negative skew), with an interior
+        mode far from 1.
+
+        Unlike `get_top_users`, this metric is invariant to the number of users
+        and points in the right direction:
+            skew >  0  => organic-like (long tail of one-time posters)
+            skew <  0  => suspicious / coordinated (mode shifted to high activity)
+
+    Parameters:
+        df (pd.DataFrame)
+        username_col (str): Column with the user handle. Defaults to 'screen name'.
+        return_mode (bool): If True also return the approximate mode of the
+            posts-per-user distribution (interpretable: ~1 => organic,
+            >> 1 => coordinated).
+
+    Returns:
+        float: skewness of log10(posts per user).
+        If return_mode is True: (skew, mode_posts).
+    """
+    from scipy.stats import skew
+
+    user_post_counts = df[username_col].value_counts().values.astype(float)
+
+    # Need at least 3 users for a meaningful skewness
+    if len(user_post_counts) < 3:
+        return (np.nan, np.nan) if return_mode else np.nan
+
+    log_counts = np.log10(user_post_counts)
+    skew_value = float(skew(log_counts))
+
+    if not return_mode:
+        return skew_value
+
+    # Approximate mode: peak of the histogram in log space, mapped back to posts
+    hist, edges = np.histogram(log_counts, bins=min(30, len(log_counts)))
+    peak = hist.argmax()
+    mode_posts = float(10 ** ((edges[peak] + edges[peak + 1]) / 2))
+
+    return skew_value, mode_posts
 
 def compute_bot_likelihood_metrics(
     df: pd.DataFrame,
