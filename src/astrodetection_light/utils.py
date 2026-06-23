@@ -295,6 +295,55 @@ def get_similarity_hub_score(G_sharing, df, threshold=0.9, username_col="screen 
     score = largest_community_size / n_users if n_users > 0 else 0
     return score * 100
 
+def activity_distribution_skew(df, username_col: str = 'screen name', return_mode: bool = False):
+    """Measure the *shape* of the posts-per-user distribution via the skewness
+    of log10(posts per user).
+
+    Rationale:
+        Organic activity follows a heavy-tailed (power-law-like) distribution:
+        most accounts post once, a few post a lot -> the distribution is
+        RIGHT-skewed (positive skew), with the mode at ~1 post.
+        Coordinated / astroturf activity is instead a homogeneous "army" of
+        highly active accounts: the mass piles up at high activity levels and
+        the distribution becomes LEFT-skewed (negative skew), with an interior
+        mode far from 1.
+
+        Unlike `get_top_users`, this metric is invariant to the number of users
+        and points in the right direction:
+            skew >  0  => organic-like (long tail of one-time posters)
+            skew <  0  => suspicious / coordinated (mode shifted to high activity)
+
+    Parameters:
+        df (pd.DataFrame)
+        username_col (str): Column with the user handle. Defaults to 'screen name'.
+        return_mode (bool): If True also return the approximate mode of the
+            posts-per-user distribution (interpretable: ~1 => organic,
+            >> 1 => coordinated).
+
+    Returns:
+        float: skewness of log10(posts per user).
+        If return_mode is True: (skew, mode_posts).
+    """
+    from scipy.stats import skew
+
+    user_post_counts = df[username_col].value_counts().values.astype(float)
+
+    # Need at least 3 users for a meaningful skewness
+    if len(user_post_counts) < 3:
+        return (np.nan, np.nan) if return_mode else np.nan
+
+    log_counts = np.log10(user_post_counts)
+    skew_value = float(skew(log_counts))
+
+    if not return_mode:
+        return skew_value
+
+    # Approximate mode: peak of the histogram in log space, mapped back to posts
+    hist, edges = np.histogram(log_counts, bins=min(30, len(log_counts)))
+    peak = hist.argmax()
+    mode_posts = float(10 ** ((edges[peak] + edges[peak + 1]) / 2))
+
+    return skew_value, mode_posts
 
 def compute_bot_likelihood_metrics(
     df: pd.DataFrame,
@@ -307,6 +356,8 @@ def compute_bot_likelihood_metrics(
     n_weeks: int = 4,
     G_sharing: nx.Graph = None,
     similarity_sharing_threshold: float = 0.9,
+    G_temporal: nx.Graph = None,
+    temporal_threshold: float = 0.9,
     n_followers: int = 10,
     n_following: int = 10,
     # Column name overrides (keep defaults for backwards compatibility)
@@ -349,6 +400,10 @@ def compute_bot_likelihood_metrics(
             `create_coSharing_graph`). Required to compute the similarity hub score.
         similarity_sharing_threshold (float): Minimum edge weight to retain when filtering
             `G_sharing` before community detection. Default is 0.9.
+        G_temporal (nx.Graph, optional): Co-activity temporal similarity graph (output of
+            `create_coActivity_graph`). Required to compute the temporal hub score.
+        temporal_threshold (float): Minimum edge weight to retain when filtering `G_temporal`
+            before community detection. Default is 0.9.
         username_col (str): Column name for user handles. Default is 'username'.
         followers_col (str): Column name for follower count. Default is 'followers'.
         following_col (str): Column name for following count. Default is 'following'.
@@ -374,6 +429,7 @@ def compute_bot_likelihood_metrics(
             - 'top_creation_weeks (%)': % of accounts created in the top `n_weeks` most common creation weeks.
             - 'excessive_tags_score (%)': % of tweets mentioning more than 4 users (@tags).
             - 'similarity_hub_score (%)': % of retweeting users belonging to the largest community in `G_sharing`.
+            - 'temporal_hub_score (%)': % of users belonging to the largest community in `G_temporal` (shared activity time bins).
             - 'number_of_original_tweets': Absolute count of rows where `type_col` == 'post', or None if `type_col` is absent.
             - 'number_of_retweets': Absolute count of rows where `type_col` == 'retweet', or None if `type_col` is absent.
             - 'number_of_tweets_or_retweets_with_text': Absolute count of rows with non-null `tweet_text_col`, or None if absent.
@@ -447,5 +503,11 @@ def compute_bot_likelihood_metrics(
         results['similarity_hub_score (%)'] = round(get_similarity_hub_score(G_sharing, df, threshold=similarity_sharing_threshold, username_col=username_col, type_col=type_col), 2)
     else:
         results['similarity_hub_score (%)'] = None
+
+    # 10. Temporal Hub Score (shared activity time bins; counts all users, no row-type filter)
+    if G_temporal is not None and username_col in df.columns:
+        results['temporal_hub_score (%)'] = round(get_similarity_hub_score(G_temporal, df, threshold=temporal_threshold, username_col=username_col, type_col=None), 2)
+    else:
+        results['temporal_hub_score (%)'] = None
 
     return results

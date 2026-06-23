@@ -52,28 +52,56 @@ def create_coSharing_graph(data, type_column='row_type', userid_col='screen name
             condition is satisfied. Isolated nodes are excluded.
     
     This is a modified version of code used in the following paper:
-    
-    Luca Luceri, Valeria Pantè, Keith Burghardt, and Emilio Ferrara. 2024. 
-    Unmasking the Web of Deceit: Uncovering Coordinated Activity to Expose Information Operations on Twitter. 
-    In Proceedings of the ACM Web Conference 2024 (WWW '24). Association for Computing Machinery, New York, NY, USA, 2530–2541. 
+
+    Luca Luceri, Valeria Pantè, Keith Burghardt, and Emilio Ferrara. 2024.
+    Unmasking the Web of Deceit: Uncovering Coordinated Activity to Expose Information Operations on Twitter.
+    In Proceedings of the ACM Web Conference 2024 (WWW '24). Association for Computing Machinery, New York, NY, USA, 2530–2541.
     https://doi.org/10.1145/3589334.3645529
     """
 
     data = data.copy()
-    
+
     data = data.rename(columns={userid_col: 'userid', feature_col: 'feature_shared', type_column: 'row_type'})
 
     data = data[data['row_type']=='retweet'] #keep only retweets
 
-    temp = data.groupby('feature_shared', as_index=False).count()
-    data = data.loc[data['feature_shared'].isin(temp.loc[temp['userid']>1]['feature_shared'].to_list())] #keep only accounts retweeted by more than 1 user
+    return _tfidf_cosine_overlap_graph(data[['userid', 'feature_shared']], min_count=min_retweets, min_overlap=min_overlap)
 
-    # Count how many times each user retweeted each account (instead of binary 1)
+
+def _tfidf_cosine_overlap_graph(data, min_count, min_overlap):
+    """
+    Build a TF-IDF cosine-similarity graph among users from a long-format
+    (userid, feature_shared) event table.
+
+    Shared core of create_coSharing_graph and create_coActivity_graph: the
+    `feature_shared` column is treated as an opaque categorical key (a retweeted
+    account, a time bin, ...). See those functions for the full algorithm.
+
+    Args:
+        data (pd.DataFrame): One row per event, with columns 'userid' (str) and
+            'feature_shared' (hashable). One column per distinct feature value.
+        min_count (int): Minimum total events a user must have to be considered
+            active and included in the similarity computation. IDF is still
+            computed over all users regardless of this threshold.
+        min_overlap (int): Minimum number of distinct feature values that two
+            users must share for an edge to be included.
+
+    Returns:
+        nx.Graph: Undirected weighted graph of active users. Edge weights are
+            TF-IDF cosine similarity scores. Isolated nodes are excluded.
+    """
+
+    data = data.copy()
+
+    temp = data.groupby('feature_shared', as_index=False).count()
+    data = data.loc[data['feature_shared'].isin(temp.loc[temp['userid']>1]['feature_shared'].to_list())] #keep only features shared by more than 1 user
+
+    # Count how many times each user produced each feature (instead of binary 1)
     data = data.groupby(['userid', 'feature_shared'], as_index=False).size().rename(columns={'size': 'value'})
 
-    # Identify active users (>min_retweets total retweets) BEFORE filtering, so IDF is computed over all users
+    # Identify active users (>min_count total events) BEFORE filtering, so IDF is computed over all users
     user_totals = data.groupby('userid')['value'].sum()
-    active_users = set(user_totals[user_totals > min_retweets].index.astype(str))
+    active_users = set(user_totals[user_totals > min_count].index.astype(str))
 
     ids = dict(zip(list(data.feature_shared.unique()), list(range(data.feature_shared.unique().shape[0]))))
     data['feature_shared'] = data['feature_shared'].apply(lambda x: ids[x]).astype(int)
@@ -90,11 +118,11 @@ def create_coSharing_graph(data, type_column='row_type', userid_col='screen name
     sparse_matrix = csr_matrix((data["value"], (row, col)), shape=(person_c.categories.size, thing_c.categories.size))
     del row, col, person_c, thing_c
     
-    # Fit TF-IDF on ALL users so IDF reflects account popularity across the full population
+    # Fit TF-IDF on ALL users so IDF reflects feature popularity across the full population
     vectorizer = TfidfTransformer()
     tfidf_matrix = vectorizer.fit_transform(sparse_matrix)
 
-    # Now filter to active users only (>2 retweets) for similarity computation
+    # Now filter to active users only (>min_count events) for similarity computation
     userid_inv = {v: k for k, v in userid.items()}  # int index -> username
     active_indices = sorted([userid[u] for u in active_users if u in userid])
     active_usernames = [userid_inv[i] for i in active_indices]
@@ -105,9 +133,9 @@ def create_coSharing_graph(data, type_column='row_type', userid_col='screen name
     tfidf_active = tfidf_matrix[active_indices, :]
 
     # --- Minimum overlap filter ---
-    # Build a binary matrix (1 if user retweeted account at least once) for active users
+    # Build a binary matrix (1 if user produced the feature at least once) for active users
     binary_active = (sparse_matrix[active_indices, :] > 0).astype(np.float32)
-    # overlap[i, j] = number of accounts retweeted by both user i and user j
+    # overlap[i, j] = number of features shared by both user i and user j
     overlap = (binary_active @ binary_active.T).toarray()
 
     similarities = cosine_similarity(tfidf_active, dense_output=False)
@@ -129,6 +157,68 @@ def create_coSharing_graph(data, type_column='row_type', userid_col='screen name
     G.remove_nodes_from(list(nx.isolates(G)))
 
     return G
+
+
+def create_coActivity_graph(data, userid_col='screen name', timestamp_col='tweet_date', bin_minutes=5, min_activity=2, min_overlap=3):
+    """
+    Build a co-activity similarity graph among users based on shared temporal activity bins.
+
+    Temporal counterpart of create_coSharing_graph: instead of the retweeted account, the
+    shared feature is the time bin in which a user was active. Posts and retweets are treated
+    the same (no row-type filter). Each user's activity timestamps are floored to `bin_minutes`
+    buckets; users that are repeatedly active in the same (and especially rare) time bins get a
+    high TF-IDF cosine similarity, which is a signal of coordinated behaviour.
+
+    Algorithm steps:
+        1. Parse `timestamp_col` (timezone-normalized), drop unparseable rows, and floor each
+           activity time to a `bin_minutes` bucket -> the shared feature is the unix timestamp
+           (seconds) of the bin.
+        2. Keep only bins used by more than one user.
+        3. Count how many times each user was active in each bin (frequency matrix).
+        4. Compute TF-IDF weights over the full user population so that IDF down-weights common
+           bins (everyone active) and up-weights rare bins shared by few users.
+        5. Restrict similarity computation to active users (> `min_activity` total events).
+        6. Compute pairwise cosine similarity and apply a hard overlap filter (zero out pairs
+           sharing fewer than `min_overlap` distinct time bins).
+        7. Build an undirected weighted graph; remove self-loops and isolated nodes.
+
+    Args:
+        data (pd.DataFrame): DataFrame containing activity rows (posts and/or retweets). Must
+            include columns for user id and activity timestamp.
+        userid_col (str): Name of the column containing user identifiers. Default is 'screen name'.
+        timestamp_col (str): Name of the column containing the activity timestamp. Default is
+            'tweet_date'.
+        bin_minutes (int): Size of the temporal bin in minutes. Default is 5.
+        min_activity (int): Minimum total number of events a user must have to be considered
+            active and included in the similarity computation. IDF is still computed over all
+            users regardless of this threshold. Default is 2.
+        min_overlap (int): Minimum number of distinct time bins that two users must share for an
+            edge to be included in the graph. Default is 3.
+
+    Returns:
+        nx.Graph: Undirected weighted graph of active users. Edge weights are TF-IDF cosine
+            similarity scores. Isolated nodes are excluded.
+
+    Note:
+        `feature_shared` is an opaque categorical key mapped to a matrix column; the TF-IDF is
+        computed by TfidfTransformer over a hand-built count matrix (no text tokenization), so
+        the bin encoding (unix int here) is purely a representation choice.
+    """
+
+    data = data.copy()
+
+    data = data.rename(columns={userid_col: 'userid'})
+
+    ts = pd.to_datetime(data[timestamp_col], utc=True, errors='coerce').dt.tz_localize(None)
+    data = data.loc[ts.notna()].copy()
+    ts = ts.loc[ts.notna()]
+
+    # Shared feature = unix timestamp (seconds) of the floored time bin.
+    # Use Timedelta floor-division so the result is correct regardless of the
+    # underlying datetime64 resolution (s/ms/us/ns).
+    data['feature_shared'] = (ts.dt.floor(f'{bin_minutes}min') - pd.Timestamp("1970-01-01")) // pd.Timedelta(seconds=1)
+
+    return _tfidf_cosine_overlap_graph(data[['userid', 'feature_shared']], min_count=min_activity, min_overlap=min_overlap)
 
 
 def create_network(

@@ -356,6 +356,8 @@ def compute_bot_likelihood_metrics(
     n_weeks: int = 4,
     G_sharing: nx.Graph = None,
     similarity_sharing_threshold: float = 0.9,
+    G_temporal: nx.Graph = None,
+    temporal_threshold: float = 0.9,
     n_followers: int = 10,
     n_following: int = 10,
     # Column name overrides (keep defaults for backwards compatibility)
@@ -398,6 +400,10 @@ def compute_bot_likelihood_metrics(
             `create_coSharing_graph`). Required to compute the similarity hub score.
         similarity_sharing_threshold (float): Minimum edge weight to retain when filtering
             `G_sharing` before community detection. Default is 0.9.
+        G_temporal (nx.Graph, optional): Co-activity temporal similarity graph (output of
+            `create_coActivity_graph`). Required to compute the temporal hub score.
+        temporal_threshold (float): Minimum edge weight to retain when filtering `G_temporal`
+            before community detection. Default is 0.9.
         username_col (str): Column name for user handles. Default is 'username'.
         followers_col (str): Column name for follower count. Default is 'followers'.
         following_col (str): Column name for following count. Default is 'following'.
@@ -423,6 +429,7 @@ def compute_bot_likelihood_metrics(
             - 'top_creation_weeks (%)': % of accounts created in the top `n_weeks` most common creation weeks.
             - 'excessive_tags_score (%)': % of tweets mentioning more than 4 users (@tags).
             - 'similarity_hub_score (%)': % of retweeting users belonging to the largest community in `G_sharing`.
+            - 'temporal_hub_score (%)': % of users belonging to the largest community in `G_temporal` (shared activity time bins).
             - 'number_of_original_tweets': Absolute count of rows where `type_col` == 'post', or None if `type_col` is absent.
             - 'number_of_retweets': Absolute count of rows where `type_col` == 'retweet', or None if `type_col` is absent.
             - 'number_of_tweets_or_retweets_with_text': Absolute count of rows with non-null `tweet_text_col`, or None if absent.
@@ -496,5 +503,11 @@ def compute_bot_likelihood_metrics(
         results['similarity_hub_score (%)'] = round(get_similarity_hub_score(G_sharing, df, threshold=similarity_sharing_threshold, username_col=username_col, type_col=type_col), 2)
     else:
         results['similarity_hub_score (%)'] = None
+
+    # 10. Temporal Hub Score (shared activity time bins; counts all users, no row-type filter)
+    if G_temporal is not None and username_col in df.columns:
+        results['temporal_hub_score (%)'] = round(get_similarity_hub_score(G_temporal, df, threshold=temporal_threshold, username_col=username_col, type_col=None), 2)
+    else:
+        results['temporal_hub_score (%)'] = None
 
     return results
