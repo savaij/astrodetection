@@ -63,6 +63,49 @@ def get_top_users(df, percent=1, username_col: str = 'username'):
     return len(top_users_df) / len(df) * 100 , top_x_percent_count
 
 
+def _evenness(counts) -> Optional[float]:
+    """
+    Pielou's evenness index (H / H_max) expressed as a percentage.
+
+    Parameters:
+        counts: Iterable of non-negative category counts.
+
+    Returns:
+        float | None: 0 => all mass concentrated in one category, 100 => perfectly
+        uniform distribution. None when fewer than 2 non-empty categories are
+        present (H_max == 0, index undefined).
+    """
+    counts = np.asarray(counts, dtype=float)
+    counts = counts[counts > 0]
+
+    if len(counts) < 2:
+        return None
+
+    p = counts / counts.sum()
+    h = -np.sum(p * np.log2(p))
+
+    return h / np.log2(len(counts)) * 100
+
+
+def account_activity_evenness(df: pd.DataFrame, username_col: str = 'username') -> Optional[float]:
+    """
+    Calculate how evenly posts are spread across accounts.
+
+    A low value means activity is concentrated in a few very active accounts,
+    which is a typical signature of coordinated campaigns.
+
+    Parameters:
+        df (pd.DataFrame): The input DataFrame with a username column.
+        username_col (str): Column name containing the user handle. Defaults to 'username'.
+
+    Returns:
+        float | None: Evenness index (0-100), or None with fewer than 2 accounts.
+    """
+    user_post_counts = df[username_col].value_counts().values.astype(float)
+
+    return _evenness(user_post_counts)
+
+
 def calculate_zero_fw_score(df: pd.DataFrame, followers_col: str = 'followers', following_col: str = 'following', username_col: str = 'username') -> float:
     """
     Calculate the percentage of rows where both 'followers' and 'following' are less than 1.
@@ -209,6 +252,62 @@ def check_creation_week_cluster(
 
     return week_counts[:n_weeks].sum() / len(df) * 100 if len(df) > 0 else 0
 
+def creation_week_evenness(
+    df: pd.DataFrame,
+    account_creation_col: str = 'createdDate',
+    username_col: str = 'username'
+) -> Optional[float]:
+    """
+    Calculate how evenly account creations are spread across weeks.
+
+    A low value means most accounts were created in a burst of a few weeks,
+    which suggests a batch-created network.
+
+    Returns:
+        float | None: Evenness index (0-100), or None with fewer than 2 creation weeks.
+    """
+    creation_weeks = pd.to_datetime(df[account_creation_col]).dt.to_period('W')
+    week_counts = creation_weeks.value_counts()
+
+    return _evenness(week_counts.values)
+
+def avg_activity_per_account(
+    df: pd.DataFrame,
+    username_col: str = 'username',
+    type_col: str = 'row_type'
+) -> dict:
+    """
+    Calculate the average number of posts, retweets and total rows per unique account.
+
+    All three averages share the same denominator (total unique accounts in `df`),
+    so they remain comparable and additive.
+
+    Returns:
+        dict: 'avg_posts_per_account', 'avg_retweets_per_account' (both None when
+        `type_col` is absent) and 'avg_activity_per_account'.
+    """
+    n_users = df[username_col].nunique()
+
+    if n_users == 0:
+        return {
+            'avg_posts_per_account': None,
+            'avg_retweets_per_account': None,
+            'avg_activity_per_account': None,
+        }
+
+    if type_col in df.columns:
+        avg_posts = (df[type_col] == 'post').sum() / n_users
+        avg_retweets = (df[type_col] == 'retweet').sum() / n_users
+    else:
+        avg_posts = None
+        avg_retweets = None
+
+    return {
+        'avg_posts_per_account': avg_posts,
+        'avg_retweets_per_account': avg_retweets,
+        'avg_activity_per_account': len(df) / n_users,
+    }
+
 def _check_excessive_tags(tweet, threshold=4):
     """
     Check if a tweet has more than a specified number of people tagged.
@@ -295,56 +394,6 @@ def get_similarity_hub_score(G_sharing, df, threshold=0.9, username_col="screen 
     score = largest_community_size / n_users if n_users > 0 else 0
     return score * 100
 
-def activity_distribution_skew(df, username_col: str = 'screen name', return_mode: bool = False):
-    """Measure the *shape* of the posts-per-user distribution via the skewness
-    of log10(posts per user).
-
-    Rationale:
-        Organic activity follows a heavy-tailed (power-law-like) distribution:
-        most accounts post once, a few post a lot -> the distribution is
-        RIGHT-skewed (positive skew), with the mode at ~1 post.
-        Coordinated / astroturf activity is instead a homogeneous "army" of
-        highly active accounts: the mass piles up at high activity levels and
-        the distribution becomes LEFT-skewed (negative skew), with an interior
-        mode far from 1.
-
-        Unlike `get_top_users`, this metric is invariant to the number of users
-        and points in the right direction:
-            skew >  0  => organic-like (long tail of one-time posters)
-            skew <  0  => suspicious / coordinated (mode shifted to high activity)
-
-    Parameters:
-        df (pd.DataFrame)
-        username_col (str): Column with the user handle. Defaults to 'screen name'.
-        return_mode (bool): If True also return the approximate mode of the
-            posts-per-user distribution (interpretable: ~1 => organic,
-            >> 1 => coordinated).
-
-    Returns:
-        float: skewness of log10(posts per user).
-        If return_mode is True: (skew, mode_posts).
-    """
-    from scipy.stats import skew
-
-    user_post_counts = df[username_col].value_counts().values.astype(float)
-
-    # Need at least 3 users for a meaningful skewness
-    if len(user_post_counts) < 3:
-        return (np.nan, np.nan) if return_mode else np.nan
-
-    log_counts = np.log10(user_post_counts)
-    skew_value = float(skew(log_counts))
-
-    if not return_mode:
-        return skew_value
-
-    # Approximate mode: peak of the histogram in log space, mapped back to posts
-    hist, edges = np.histogram(log_counts, bins=min(30, len(log_counts)))
-    peak = hist.argmax()
-    mode_posts = float(10 ** ((edges[peak] + edges[peak + 1]) / 2))
-
-    return skew_value, mode_posts
-
 def compute_bot_likelihood_metrics(
     df: pd.DataFrame,
     matches: pd.DataFrame = None,
@@ -377,7 +426,7 @@ def compute_bot_likelihood_metrics(
     Combine multiple behavioral metrics to estimate the likelihood that a set of accounts consists of bots
     or is engaged in coordinated inauthentic behavior.
 
-    Computes up to 10 indicators. Each metric is included in the result dict only when the required
+    Computes up to 13 indicators. Each metric is included in the result dict only when the required
     columns are present in `df` (or the required arguments are provided); otherwise its value is None.
 
     Parameters:
@@ -433,6 +482,16 @@ def compute_bot_likelihood_metrics(
             - 'number_of_original_tweets': Absolute count of rows where `type_col` == 'post', or None if `type_col` is absent.
             - 'number_of_retweets': Absolute count of rows where `type_col` == 'retweet', or None if `type_col` is absent.
             - 'number_of_tweets_or_retweets_with_text': Absolute count of rows with non-null `tweet_text_col`, or None if absent.
+            - 'account_activity_evenness (%)': Pielou evenness of the per-account post distribution.
+            - 'creation_week_evenness (%)': Pielou evenness of the account-creation-week distribution.
+            - 'avg_posts_per_account': Mean number of `type_col` == 'post' rows per unique account.
+            - 'avg_retweets_per_account': Mean number of `type_col` == 'retweet' rows per unique account.
+            - 'avg_activity_per_account': Mean number of rows (posts + retweets) per unique account.
+
+        Note on polarity: unlike every other metric here, the two evenness indices are *inverted* —
+        0 means maximum concentration (all activity in one account / all accounts created in one
+        week, i.e. highly suspicious) and 100 means a perfectly uniform distribution. They are None
+        when there are fewer than 2 accounts / creation weeks, where the index is undefined.
     """
 
     results = {}
@@ -509,5 +568,27 @@ def compute_bot_likelihood_metrics(
         results['temporal_hub_score (%)'] = round(get_similarity_hub_score(G_temporal, df, threshold=temporal_threshold, username_col=username_col, type_col=None), 2)
     else:
         results['temporal_hub_score (%)'] = None
+
+    # 11. Account Activity Evenness (low => activity concentrated in few accounts)
+    if username_col in df.columns:
+        evenness = account_activity_evenness(df, username_col=username_col)
+        results['account_activity_evenness (%)'] = round(evenness, 2) if evenness is not None else None
+    else:
+        results['account_activity_evenness (%)'] = None
+
+    # 12. Creation Week Evenness (low => accounts created in a burst)
+    if account_creation_col in df.columns:
+        evenness = creation_week_evenness(df, account_creation_col=account_creation_col, username_col=username_col)
+        results['creation_week_evenness (%)'] = round(evenness, 2) if evenness is not None else None
+    else:
+        results['creation_week_evenness (%)'] = None
+
+    # 13. Average Activity per Account
+    if username_col in df.columns:
+        for key, value in avg_activity_per_account(df, username_col=username_col, type_col=type_col).items():
+            results[key] = round(value, 2) if value is not None else None
+    else:
+        for key in ('avg_posts_per_account', 'avg_retweets_per_account', 'avg_activity_per_account'):
+            results[key] = None
 
     return results
