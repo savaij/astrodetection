@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from collections import Counter
 import re
+import warnings
 import networkx as nx
 from networkx.algorithms import community
 from ipysigma import Sigma
@@ -375,6 +376,18 @@ def get_similarity_hub_score(G_sharing, df, threshold=0.9, username_col="screen 
     """
 
     G_sharing = G_sharing.copy()  # avoid modifying the original graph
+
+    # Graphs built with create_co*_graph(..., fast_graph=True) carry the weight_threshold
+    # used at construction time. Edges below it were never generated, so filtering here at
+    # a lower threshold would silently under-connect the graph and skew the score.
+    built_with = G_sharing.graph.get('weight_threshold')
+    if built_with is not None and threshold < built_with:
+        warnings.warn(
+            f"This graph was built in fast mode with weight_threshold={built_with}: edges with "
+            f"weight in [{threshold}, {built_with}) do not exist. Use threshold >= {built_with} "
+            f"for a correct result.",
+            stacklevel=2,
+        )
 
     edges_to_remove = [(u, v) for u, v, d in G_sharing.edges(data=True) if d.get('weight', 0) < threshold]
 
