@@ -7,10 +7,16 @@ from pandas.api.types import CategoricalDtype
 from scipy.sparse import csr_matrix
 from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import normalize
 from ipysigma import Sigma
 
 
-def create_coSharing_graph(data, type_column='row_type', userid_col='screen name', feature_col='retweeted user', min_retweets=2, min_overlap=3):
+# Rows of active users processed per block in the fast similarity product. Peak
+# memory is ~ _BLOCK_ROWS x N values, keeping the fast path memory-bounded.
+_BLOCK_ROWS = 512
+
+
+def create_coSharing_graph(data, type_column='row_type', userid_col='screen name', feature_col='retweeted user', min_retweets=2, min_overlap=3, fast_graph=False, weight_threshold=0.9):
     """
     Build a co-sharing similarity graph among users based on shared retweet targets.
 
@@ -45,12 +51,23 @@ def create_coSharing_graph(data, type_column='row_type', userid_col='screen name
             computed over all users regardless of this threshold. Default is 2.
         min_overlap (int): Minimum number of distinct retweeted accounts that two users
             must share for an edge to be included in the graph. Default is 3.
+        fast_graph (bool): If True, use the memory-bounded builder that applies the
+            weight threshold during construction (see `weight_threshold`) instead of
+            materializing dense N x N matrices. The resulting graph is NOT the complete
+            graph: edges with weight < `weight_threshold` are never created. Use this on
+            large datasets where the full graph exhausts RAM. Default is False.
+        weight_threshold (float): Only used when `fast_graph=True`. Minimum edge weight
+            (TF-IDF cosine similarity) to keep during construction. IMPORTANT: the fast
+            graph is equivalent to the full graph only if the threshold later passed to
+            get_similarity_hub_score / compute_bot_likelihood_metrics
+            (`similarity_sharing_threshold`) is >= this value; a lower downstream
+            threshold yields a silently under-connected graph. Default is 0.9.
 
     Returns:
         G (nx.Graph): Undirected weighted graph of active users. Edge weights are
             TF-IDF cosine similarity scores (0, 1], only present when the overlap
             condition is satisfied. Isolated nodes are excluded.
-    
+
     This is a modified version of code used in the following paper:
 
     Luca Luceri, Valeria Pantè, Keith Burghardt, and Emilio Ferrara. 2024.
@@ -64,6 +81,9 @@ def create_coSharing_graph(data, type_column='row_type', userid_col='screen name
     data = data.rename(columns={userid_col: 'userid', feature_col: 'feature_shared', type_column: 'row_type'})
 
     data = data[data['row_type']=='retweet'] #keep only retweets
+
+    if fast_graph:
+        return _tfidf_cosine_overlap_graph_fast(data[['userid', 'feature_shared']], min_count=min_retweets, min_overlap=min_overlap, weight_threshold=weight_threshold)
 
     return _tfidf_cosine_overlap_graph(data[['userid', 'feature_shared']], min_count=min_retweets, min_overlap=min_overlap)
 
@@ -159,7 +179,152 @@ def _tfidf_cosine_overlap_graph(data, min_count, min_overlap):
     return G
 
 
-def create_coActivity_graph(data, userid_col='screen name', timestamp_col='tweet_date', bin_minutes=5, min_activity=2, min_overlap=3):
+def _tfidf_cosine_overlap_graph_fast(data, min_count, min_overlap, weight_threshold):
+    """
+    Memory-bounded equivalent of _tfidf_cosine_overlap_graph: builds only the edges
+    with weight >= `weight_threshold` and never allocates a dense N x N matrix.
+
+    Same TF-IDF (IDF fitted over ALL users), same min_overlap filter, same nodes in
+    the same order, same edges and weights as _tfidf_cosine_overlap_graph -- the only
+    difference is that edges with weight < `weight_threshold` are never created. This
+    is safe because get_similarity_hub_score discards exactly those edges immediately
+    afterwards, as long as its threshold is >= `weight_threshold`.
+
+    The chosen `weight_threshold` is stored on the returned graph as
+    G.graph['weight_threshold'] so get_similarity_hub_score can warn when it is asked
+    to filter at a lower (invalid) threshold.
+
+    Args:
+        data (pd.DataFrame): One row per event, with columns 'userid' (str) and
+            'feature_shared' (hashable).
+        min_count (int): Minimum total events a user must have to be considered active.
+            IDF is still computed over all users regardless of this threshold.
+        min_overlap (int): Minimum number of distinct feature values that two users
+            must share for an edge to be included.
+        weight_threshold (float): Minimum edge weight (cosine similarity) to keep. Edges
+            below this value are never generated.
+
+    Returns:
+        nx.Graph: Undirected weighted graph of active users, carrying
+            G.graph['weight_threshold']. Isolated nodes are excluded.
+    """
+
+    data = data[['userid', 'feature_shared']]
+
+    # Keep only features with more than one row.
+    # NB: like _tfidf_cosine_overlap_graph, this counts ROWS, not distinct users
+    # (a feature used 5 times by a single user passes). We replicate the code, not
+    # the comment: changing the filter would change the IDF and thus all similarities.
+    feat_rows = data.groupby('feature_shared')['userid'].count()
+    keep = feat_rows.index[feat_rows > 1]
+    data = data.loc[data['feature_shared'].isin(keep)]
+    if data.empty:
+        G = nx.Graph()
+        G.graph['weight_threshold'] = weight_threshold
+        return G
+
+    # Count how many times each user produced each feature (instead of binary 1)
+    data = data.groupby(['userid', 'feature_shared'], as_index=False).size().rename(columns={'size': 'value'})
+
+    # Identify active users (>min_count total events) BEFORE filtering, so IDF is computed over all users
+    user_totals = data.groupby('userid')['value'].sum()
+    active_users = set(user_totals[user_totals > min_count].index.astype(str))
+
+    # Same encoding as _tfidf_cosine_overlap_graph: integers assigned in order of
+    # first appearance, which determines node order in the final graph.
+    feat_uniques = data['feature_shared'].unique()
+    ids = dict(zip(list(feat_uniques), range(len(feat_uniques))))
+    data['feature_shared'] = data['feature_shared'].map(ids).astype(int)
+    del ids
+
+    user_uniques = data['userid'].astype(str).unique()
+    userid = dict(zip(list(user_uniques), range(len(user_uniques))))
+    data['userid'] = data['userid'].astype(str).map(userid).astype(int)
+
+    person_c = CategoricalDtype(sorted(data.userid.unique()), ordered=True)
+    thing_c = CategoricalDtype(sorted(data.feature_shared.unique()), ordered=True)
+    row = data.userid.astype(person_c).cat.codes
+    col = data.feature_shared.astype(thing_c).cat.codes
+    sparse_matrix = csr_matrix((data["value"], (row, col)), shape=(person_c.categories.size, thing_c.categories.size))
+    del row, col, person_c, thing_c, data
+
+    # Fit TF-IDF on ALL users so IDF reflects feature popularity across the full population
+    tfidf_matrix = TfidfTransformer().fit_transform(sparse_matrix)
+
+    userid_inv = {v: k for k, v in userid.items()}
+    active_indices = sorted(userid[u] for u in active_users if u in userid)
+    if not active_indices:
+        G = nx.Graph()
+        G.graph['weight_threshold'] = weight_threshold
+        return G
+    active_usernames = [userid_inv[i] for i in active_indices]
+    del userid, userid_inv
+
+    tfidf_active = tfidf_matrix[active_indices, :]
+    del tfidf_matrix
+    binary_active = (sparse_matrix[active_indices, :] > 0).astype(np.float32)
+    del sparse_matrix
+
+    # cosine_similarity(X) == (X_normalized) @ (X_normalized).T; normalizing once,
+    # each block is a plain sparse product.
+    tfidf_norm = normalize(tfidf_active, norm="l2", axis=1, copy=True)
+    del tfidf_active
+
+    n_active = len(active_indices)
+    src, dst, wts = [], [], []
+    for start in range(0, n_active, _BLOCK_ROWS):
+        stop = min(start + _BLOCK_ROWS, n_active)
+        sims = tfidf_norm[start:stop] @ tfidf_norm.T  # (block x N), sparse
+
+        # Threshold immediately: above the cutoff only a tiny fraction of pairs survive.
+        sims.data[sims.data < weight_threshold] = 0
+        sims.eliminate_zeros()
+        if sims.nnz == 0:
+            continue
+
+        coo = sims.tocoo()
+        gi = coo.row + start
+        gj = coo.col
+        w = coo.data
+        del sims, coo
+
+        # upper triangle only: no self-loops, no duplicates
+        upper = gi < gj
+        if not upper.any():
+            continue
+        gi, gj, w = gi[upper], gj[upper], w[upper]
+
+        # overlap only for the surviving (few) pairs: no dense matrix
+        ov = np.asarray(binary_active[gi].multiply(binary_active[gj]).sum(axis=1)).ravel()
+        ok = ov >= min_overlap
+        if not ok.any():
+            continue
+
+        src.append(gi[ok])
+        dst.append(gj[ok])
+        wts.append(w[ok])
+
+    # Same nodes and same order as nx.from_pandas_adjacency(df_adj): all active users,
+    # then isolates are removed.
+    G = nx.Graph()
+    G.graph['weight_threshold'] = weight_threshold
+    G.add_nodes_from(active_usernames)
+    if src:
+        src = np.concatenate(src)
+        dst = np.concatenate(dst)
+        wts = np.concatenate(wts)
+        G.add_edges_from(
+            (active_usernames[i], active_usernames[j], {"weight": float(w)})
+            for i, j, w in zip(src, dst, wts)
+        )
+
+    G.remove_edges_from(nx.selfloop_edges(G))
+    G.remove_nodes_from(list(nx.isolates(G)))
+
+    return G
+
+
+def create_coActivity_graph(data, userid_col='screen name', timestamp_col='tweet_date', bin_minutes=5, min_activity=2, min_overlap=3, fast_graph=False, weight_threshold=0.9):
     """
     Build a co-activity similarity graph among users based on shared temporal activity bins.
 
@@ -194,6 +359,17 @@ def create_coActivity_graph(data, userid_col='screen name', timestamp_col='tweet
             users regardless of this threshold. Default is 2.
         min_overlap (int): Minimum number of distinct time bins that two users must share for an
             edge to be included in the graph. Default is 3.
+        fast_graph (bool): If True, use the memory-bounded builder that applies the weight
+            threshold during construction (see `weight_threshold`) instead of materializing
+            dense N x N matrices. The resulting graph is NOT the complete graph: edges with
+            weight < `weight_threshold` are never created. Use this on large datasets where the
+            full graph exhausts RAM. Default is False.
+        weight_threshold (float): Only used when `fast_graph=True`. Minimum edge weight (TF-IDF
+            cosine similarity) to keep during construction. IMPORTANT: the fast graph is
+            equivalent to the full graph only if the threshold later passed to
+            get_similarity_hub_score / compute_bot_likelihood_metrics (`temporal_threshold`) is
+            >= this value; a lower downstream threshold yields a silently under-connected graph.
+            Default is 0.9.
 
     Returns:
         nx.Graph: Undirected weighted graph of active users. Edge weights are TF-IDF cosine
@@ -217,6 +393,9 @@ def create_coActivity_graph(data, userid_col='screen name', timestamp_col='tweet
     # Use Timedelta floor-division so the result is correct regardless of the
     # underlying datetime64 resolution (s/ms/us/ns).
     data['feature_shared'] = (ts.dt.floor(f'{bin_minutes}min') - pd.Timestamp("1970-01-01")) // pd.Timedelta(seconds=1)
+
+    if fast_graph:
+        return _tfidf_cosine_overlap_graph_fast(data[['userid', 'feature_shared']], min_count=min_activity, min_overlap=min_overlap, weight_threshold=weight_threshold)
 
     return _tfidf_cosine_overlap_graph(data[['userid', 'feature_shared']], min_count=min_activity, min_overlap=min_overlap)
 
