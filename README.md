@@ -81,3 +81,5 @@ network = astrodetection.create_network(matches, df)
 1. _`semantic_faiss`_ function can now take detect only copypastas based on levenshtein distance, ignoring embeddings, if "skip" is passed as argument in _df_embeddings_use_ field.
 
 2. _`compute_bot_likelihood_metrics`_ function can now take columns' names as arguments for more customization
+
+3. _`compute_bot_likelihood_metrics`_ now returns _`high_following_followers_ratio (%)`_, the share of rows whose following/followers ratio exceeds _fw_ratio_threshold_ (default 10).

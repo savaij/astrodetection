@@ -142,6 +142,30 @@ def calculate_low_fw_score(df: pd.DataFrame, followers_col: str = 'followers', f
 
     return low_fw_score
 
+def following_followers_ratio_score(df: pd.DataFrame, followers_col: str = 'followers', following_col: str = 'following', username_col: str = 'username', ratio_threshold: float = 10) -> float:
+    """
+    Calculate the percentage of rows where following / followers exceeds `ratio_threshold`.
+
+    Accounts that follow far more users than follow them back are a common signature
+    of newly created or automated profiles.
+
+    Parameters:
+        df (pd.DataFrame): The input DataFrame, which must have 'followers' and 'following' columns.
+        ratio_threshold (float): Minimum following/followers ratio. Default is 10.
+
+    Returns:
+        float: Percentage (0-100) of rows above the ratio threshold.
+    """
+    if len(df) == 0:
+        return 0
+
+    # followers == 0 with following > 0 yields inf (counted as suspicious);
+    # 0 / 0 yields NaN, which never satisfies the comparison but stays in the denominator.
+    ratio = df[following_col] / df[followers_col]
+    mask = ratio > ratio_threshold
+
+    return mask.sum() / len(df) * 100
+
 def no_image_description_score(df: pd.DataFrame, bio_col: str = 'bio', avatar_col: str = 'avatar', username_col: str = 'username') -> float:
     """
     Calculate the percentage of users with no bio and a default/empty/missing avatar.
@@ -422,6 +446,7 @@ def compute_bot_likelihood_metrics(
     temporal_threshold: float = 0.9,
     n_followers: int = 10,
     n_following: int = 10,
+    fw_ratio_threshold: float = 10,
     # Column name overrides (keep defaults for backwards compatibility)
     username_col: str = 'username',
     followers_col: str = 'followers',
@@ -466,6 +491,8 @@ def compute_bot_likelihood_metrics(
             `create_coActivity_graph`). Required to compute the temporal hub score.
         temporal_threshold (float): Minimum edge weight to retain when filtering `G_temporal`
             before community detection. Default is 0.9.
+        fw_ratio_threshold (float): Minimum following/followers ratio above which a row is
+            considered suspicious. Default is 10.
         username_col (str): Column name for user handles. Default is 'username'.
         followers_col (str): Column name for follower count. Default is 'followers'.
         following_col (str): Column name for following count. Default is 'following'.
@@ -484,6 +511,8 @@ def compute_bot_likelihood_metrics(
             - 'top_users_post_percent (%)': % of posts authored by the top `top_x_percent`% of users.
             - 'top_users_count': Absolute number of users in the top-percent group.
             - 'zero_followers_and_following (%)': % of rows where both followers and following < 1.
+            - 'high_following_followers_ratio (%)': % of rows where following / followers >
+              `fw_ratio_threshold` (rows with 0 followers and >0 following count as suspicious).
             - 'no_image_and_description (%)': % of rows with an empty bio and a default/missing avatar.
             - 'default_handle_score (%)': % of usernames ending with `num_digits` or more digits.
             - 'over_tweet_per_day (%)': % of rows where tweets_per_day exceeds `over_post_per_day_threshold`.
@@ -529,6 +558,12 @@ def compute_bot_likelihood_metrics(
         results['low_followers_and_following (%)'] = round(calculate_low_fw_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col, n_followers=n_followers, n_following=n_following), 2)
     else:
         results['low_followers_and_following (%)'] = None
+
+    #3.2 High Following/Followers Ratio
+    if followers_col in df.columns and following_col in df.columns:
+        results['high_following_followers_ratio (%)'] = round(following_followers_ratio_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col, ratio_threshold=fw_ratio_threshold), 2)
+    else:
+        results['high_following_followers_ratio (%)'] = None
 
     # 4. No Image and Description
     if bio_col in df.columns and avatar_col in df.columns:
