@@ -16,6 +16,7 @@
 *_LOCAL_*.txt
 *_REMOTE_*.txt
 .DS_Store
+.codex/*
 
 ### Linux ###
 *~
