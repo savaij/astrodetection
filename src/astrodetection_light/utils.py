@@ -444,6 +444,8 @@ def compute_bot_likelihood_metrics(
     similarity_sharing_threshold: float = 0.9,
     G_temporal: nx.Graph = None,
     temporal_threshold: float = 0.9,
+    G_url: nx.Graph = None,
+    url_threshold: float = 0.9,
     n_followers: int = 10,
     n_following: int = 10,
     fw_ratio_threshold: float = 10,
@@ -464,7 +466,7 @@ def compute_bot_likelihood_metrics(
     Combine multiple behavioral metrics to estimate the likelihood that a set of accounts consists of bots
     or is engaged in coordinated inauthentic behavior.
 
-    Computes up to 13 indicators. Each metric is included in the result dict only when the required
+    Computes up to 14 indicators. Each metric is included in the result dict only when the required
     columns are present in `df` (or the required arguments are provided); otherwise its value is None.
 
     Parameters:
@@ -491,6 +493,10 @@ def compute_bot_likelihood_metrics(
             `create_coActivity_graph`). Required to compute the temporal hub score.
         temporal_threshold (float): Minimum edge weight to retain when filtering `G_temporal`
             before community detection. Default is 0.9.
+        G_url (nx.Graph, optional): Co-URL similarity graph (output of `create_coURL_graph`).
+            Required to compute the URL hub score.
+        url_threshold (float): Minimum edge weight to retain when filtering `G_url` before
+            community detection. Default is 0.9.
         fw_ratio_threshold (float): Minimum following/followers ratio above which a row is
             considered suspicious. Default is 10.
         username_col (str): Column name for user handles. Default is 'username'.
@@ -521,6 +527,7 @@ def compute_bot_likelihood_metrics(
             - 'excessive_tags_score (%)': % of tweets mentioning more than 4 users (@tags).
             - 'similarity_hub_score (%)': % of retweeting users belonging to the largest community in `G_sharing`.
             - 'temporal_hub_score (%)': % of users belonging to the largest community in `G_temporal` (shared activity time bins).
+            - 'url_hub_score (%)': % of users belonging to the largest community in `G_url` (shared URLs).
             - 'number_of_original_tweets': Absolute count of rows where `type_col` == 'post', or None if `type_col` is absent.
             - 'number_of_retweets': Absolute count of rows where `type_col` == 'retweet', or None if `type_col` is absent.
             - 'number_of_tweets_or_retweets_with_text': Absolute count of rows with non-null `tweet_text_col`, or None if absent.
@@ -617,21 +624,27 @@ def compute_bot_likelihood_metrics(
     else:
         results['temporal_hub_score (%)'] = None
 
-    # 11. Account Activity Evenness (low => activity concentrated in few accounts)
+    # 11. URL Hub Score (shared links; counts all users, no row-type filter)
+    if G_url is not None and username_col in df.columns:
+        results['url_hub_score (%)'] = round(get_similarity_hub_score(G_url, df, threshold=url_threshold, username_col=username_col, type_col=None), 2)
+    else:
+        results['url_hub_score (%)'] = None
+
+    # 12. Account Activity Evenness (low => activity concentrated in few accounts)
     if username_col in df.columns:
         evenness = account_activity_evenness(df, username_col=username_col)
         results['account_activity_evenness (%)'] = round(evenness, 2) if evenness is not None else None
     else:
         results['account_activity_evenness (%)'] = None
 
-    # 12. Creation Week Evenness (low => accounts created in a burst)
+    # 13. Creation Week Evenness (low => accounts created in a burst)
     if account_creation_col in df.columns:
         evenness = creation_week_evenness(df, account_creation_col=account_creation_col, username_col=username_col)
         results['creation_week_evenness (%)'] = round(evenness, 2) if evenness is not None else None
     else:
         results['creation_week_evenness (%)'] = None
 
-    # 13. Average Activity per Account
+    # 14. Average Activity per Account
     if username_col in df.columns:
         for key, value in avg_activity_per_account(df, username_col=username_col, type_col=type_col).items():
             results[key] = round(value, 2) if value is not None else None

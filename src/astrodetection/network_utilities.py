@@ -1,4 +1,7 @@
+import re
+import warnings
 from typing import Dict, Iterable, Optional, Union
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import networkx as nx
 import numpy as np
@@ -14,6 +17,20 @@ from ipysigma import Sigma
 # Rows of active users processed per block in the fast similarity product. Peak
 # memory is ~ _BLOCK_ROWS x N values, keeping the fast path memory-bounded.
 _BLOCK_ROWS = 512
+
+_URL_RE = re.compile(r'https?://[^\s<>"\'()\[\]{}]+', re.IGNORECASE)
+
+# Trailing characters the regex greedily captures when a URL ends a sentence.
+_URL_TRAILING_PUNCT = '.,;:!?)]}\'"'
+
+# Query parameters dropped during normalization: they identify the campaign or the
+# sharer, not the resource, so keeping them would split the same page into many
+# distinct features and break the co-sharing match between users.
+_TRACKING_PARAMS = frozenset({
+    'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id',
+    'fbclid', 'gclid', 'gclsrc', 'dclid', 'msclkid', 'yclid', 'twclid',
+    'mc_cid', 'mc_eid', 'igshid', 'ref_src', 'ref_url', 's', 't', 'si',
+})
 
 
 def create_coSharing_graph(data, type_column='row_type', userid_col='screen name', feature_col='retweeted user', min_retweets=2, min_overlap=3, fast_graph=False, weight_threshold=0.9):
@@ -115,6 +132,11 @@ def _tfidf_cosine_overlap_graph(data, min_count, min_overlap):
 
     temp = data.groupby('feature_shared', as_index=False).count()
     data = data.loc[data['feature_shared'].isin(temp.loc[temp['userid']>1]['feature_shared'].to_list())] #keep only features shared by more than 1 user
+
+    # Nothing shared: bail out before TfidfTransformer, which rejects a (0, 0) matrix.
+    # Mirrors the early return in _tfidf_cosine_overlap_graph_fast.
+    if data.empty:
+        return nx.Graph()
 
     # Count how many times each user produced each feature (instead of binary 1)
     data = data.groupby(['userid', 'feature_shared'], as_index=False).size().rename(columns={'size': 'value'})
@@ -398,6 +420,223 @@ def create_coActivity_graph(data, userid_col='screen name', timestamp_col='tweet
         return _tfidf_cosine_overlap_graph_fast(data[['userid', 'feature_shared']], min_count=min_activity, min_overlap=min_overlap, weight_threshold=weight_threshold)
 
     return _tfidf_cosine_overlap_graph(data[['userid', 'feature_shared']], min_count=min_activity, min_overlap=min_overlap)
+
+
+def _extract_urls(text):
+    """
+    Extract http/https URLs from a free-text string.
+
+    Args:
+        text: Any value; non-string values yield an empty list.
+
+    Returns:
+        list[str]: Matched URLs, stripped of the sentence punctuation the regex
+            greedily captures when a link ends a phrase.
+    """
+    if not isinstance(text, str) or not text:
+        return []
+
+    return [u.rstrip(_URL_TRAILING_PUNCT) for u in _URL_RE.findall(text)]
+
+
+def _normalize_url(url, granularity='url', strip_tracking_params=True):
+    """
+    Reduce a URL to a canonical key so that cosmetic variants of the same link map
+    to the same feature.
+
+    Normalization: scheme dropped (http and https collapse), host lowercased without
+    a leading 'www.' or a default port, fragment dropped, tracking parameters removed,
+    remaining query parameters sorted, trailing slash removed.
+
+    Args:
+        url (str): The raw URL.
+        granularity (str): 'url' => host + path + query; 'domain' => host only.
+        strip_tracking_params (bool): Whether to drop `_TRACKING_PARAMS` from the query.
+
+    Returns:
+        str | None: The canonical key, or None when the URL has no host.
+    """
+    if granularity not in ('url', 'domain'):
+        raise ValueError("granularity must be either 'url' or 'domain'")
+
+    if not isinstance(url, str) or not url:
+        return None
+
+    try:
+        parts = urlsplit(url if '://' in url else f'http://{url}')
+    except ValueError:
+        return None
+
+    host = parts.hostname  # already lowercased, port and credentials removed
+    # The scheme-less fallback above makes urlsplit accept almost anything as a host,
+    # so require something that at least looks like a hostname.
+    if not host or '.' not in host or any(c.isspace() for c in host):
+        return None
+    if host.startswith('www.'):
+        host = host[4:]
+
+    if granularity == 'domain':
+        return host
+
+    path = parts.path.rstrip('/')
+
+    query = ''
+    if parts.query:
+        params = parse_qsl(parts.query, keep_blank_values=True)
+        if strip_tracking_params:
+            params = [(k, v) for k, v in params if k.lower() not in _TRACKING_PARAMS]
+        if params:
+            query = '?' + urlencode(sorted(params))
+
+    return f'{host}{path}{query}'
+
+
+def create_coURL_graph(data, userid_col='screen name', text_col='tweet', url_col=None, type_column=None, include_types=None, url_granularity='url', strip_tracking_params=True, exclude_domains=None, min_urls=2, min_overlap=3, fast_graph=False, weight_threshold=0.9):
+    """
+    Build a co-URL similarity graph among users based on shared links.
+
+    Third sibling of create_coSharing_graph (feature = retweeted account) and
+    create_coActivity_graph (feature = time bin): here the shared feature is the
+    normalized URL a user posted. Accounts that repeatedly push the same external
+    links -- especially links few other accounts share -- get a high TF-IDF cosine
+    similarity, a common signature of coordinated amplification campaigns.
+
+    Algorithm steps:
+        1. Optionally restrict rows by type (`type_column` / `include_types`).
+        2. Collect the URLs of each row: from `url_col` when given, otherwise by
+           regex over `text_col`. Explode to one (user, URL) pair per row.
+        3. Normalize each URL to a canonical key (see `_normalize_url`) and drop
+           duplicates within the same source row.
+        4. Keep only URLs used in more than one row.
+        5. Count how many times each user shared each URL (frequency matrix).
+        6. Compute TF-IDF weights over the full user population, so that IDF
+           down-weights links everybody shares and up-weights rare ones.
+        7. Restrict similarity computation to active users (> `min_urls` total URLs).
+        8. Compute pairwise cosine similarity and apply a hard overlap filter (zero
+           out pairs sharing fewer than `min_overlap` distinct URLs).
+        9. Build an undirected weighted graph; remove self-loops and isolated nodes.
+
+    Args:
+        data (pd.DataFrame): DataFrame containing post/retweet rows. Must include a
+            user id column and either `text_col` or `url_col`.
+        userid_col (str): Name of the column containing user identifiers. Default is
+            'screen name'.
+        text_col (str): Name of the column containing the post text URLs are extracted
+            from. Ignored when `url_col` is given. Default is 'tweet'.
+        url_col (str, optional): Name of a column that already holds the URLs. Takes
+            precedence over `text_col`. Cells may be a list/tuple/set/array of URLs or
+            a string (parsed with the same regex, so several URLs per cell are fine).
+            Prefer this when the column holds *expanded* URLs. Default is None.
+        type_column (str, optional): Name of the column identifying the row type. Only
+            used together with `include_types`. Default is None (all rows).
+        include_types (iterable, optional): Row types to keep, e.g. ('post',) to drop
+            retweets. Retweets inherit the links of the original post, so including
+            them makes this signal partly redundant with create_coSharing_graph.
+            Default is None (all rows).
+        url_granularity (str): 'url' to match on the full normalized link, 'domain' to
+            match on the host only. Domain level is a much coarser (and noisier) signal
+            since legitimate accounts also share the same news sites. Default is 'url'.
+        strip_tracking_params (bool): Whether to drop tracking query parameters
+            (utm_*, fbclid, ...) during normalization. Default is True.
+        exclude_domains (iterable, optional): Hosts to ignore (matched after
+            normalization, so without 'www.'). Pass {'twitter.com', 'x.com'} for a
+            signal independent of co-retweeting. Default is None.
+        min_urls (int): Minimum total number of URLs a user must have shared to be
+            considered active and included in the similarity computation. IDF is still
+            computed over all users regardless of this threshold. Default is 2.
+        min_overlap (int): Minimum number of distinct URLs that two users must share for
+            an edge to be included in the graph. Default is 3, for consistency with the
+            sibling builders; URL sharing is sparser than retweeting, so this is the
+            first parameter to lower when the graph comes out empty.
+        fast_graph (bool): If True, use the memory-bounded builder that applies the
+            weight threshold during construction (see `weight_threshold`) instead of
+            materializing dense N x N matrices. The resulting graph is NOT the complete
+            graph: edges with weight < `weight_threshold` are never created. Use this on
+            large datasets where the full graph exhausts RAM. Default is False.
+        weight_threshold (float): Only used when `fast_graph=True`. Minimum edge weight
+            (TF-IDF cosine similarity) to keep during construction. IMPORTANT: the fast
+            graph is equivalent to the full graph only if the threshold later passed to
+            get_similarity_hub_score / compute_bot_likelihood_metrics (`url_threshold`)
+            is >= this value; a lower downstream threshold yields a silently
+            under-connected graph. Default is 0.9.
+
+    Returns:
+        nx.Graph: Undirected weighted graph of active users. Edge weights are TF-IDF
+            cosine similarity scores. Isolated nodes are excluded.
+
+    Note:
+        t.co short links are generally unique per tweet, so the same destination appears
+        as several distinct URLs and the graph comes out empty or misleading. A warning
+        is emitted when most extracted links are t.co: in that case pass `url_col` with
+        the expanded URLs.
+    """
+
+    data = data.copy()
+
+    data = data.rename(columns={userid_col: 'userid'})
+
+    if type_column is not None and include_types is not None:
+        data = data[data[type_column].isin(list(include_types))]
+
+    if url_col is not None:
+        def _row_urls(value):
+            if isinstance(value, (list, tuple, set, np.ndarray, pd.Series)):
+                return [u for u in value if isinstance(u, str) and u]
+            return _extract_urls(value)
+
+        urls = data[url_col].map(_row_urls)
+    else:
+        urls = data[text_col].map(_extract_urls)
+
+    # Row id assigned before exploding, so the same link repeated inside one post can be
+    # deduplicated without collapsing repetitions across posts (which do feed the TF).
+    data = data[['userid']].copy()
+    data['_row_id'] = np.arange(len(data))
+    data['feature_shared'] = urls.values
+
+    data = data.explode('feature_shared').dropna(subset=['feature_shared'])
+
+    if not data.empty:
+        # Normalize the unique raw URLs only: the same link recurs many times and
+        # parsing is the expensive part here.
+        raw_uniques = data['feature_shared'].unique()
+        norm_map = {u: _normalize_url(u, granularity=url_granularity, strip_tracking_params=strip_tracking_params) for u in raw_uniques}
+        data['feature_shared'] = data['feature_shared'].map(norm_map)
+        data = data.dropna(subset=['feature_shared'])
+
+    if not data.empty:
+        # The normalized key always starts with the host, which contains neither '/' nor '?'.
+        hosts = data['feature_shared'].str.split('/', n=1).str[0].str.split('?', n=1).str[0]
+
+        tco_share = (hosts == 't.co').mean()
+        if tco_share > 0.5:
+            warnings.warn(
+                f"{tco_share:.0%} of the extracted links are t.co short links. These are generally "
+                "unique per tweet, so identical destinations look like distinct URLs and the "
+                "resulting graph will be empty or misleading. Pass url_col with expanded URLs.",
+                stacklevel=2,
+            )
+
+        if exclude_domains:
+            # positional mask: the index carries duplicates after the explode
+            data = data[(~hosts.isin(set(exclude_domains))).to_numpy()]
+
+        data = data.drop_duplicates(subset=['_row_id', 'feature_shared'])
+
+    data = data[['userid', 'feature_shared']]
+
+    # Guard: the shared builders reach TfidfTransformer.fit_transform on a (0, 0)
+    # matrix before their own early return.
+    if data.empty:
+        G = nx.Graph()
+        if fast_graph:
+            G.graph['weight_threshold'] = weight_threshold
+        return G
+
+    if fast_graph:
+        return _tfidf_cosine_overlap_graph_fast(data, min_count=min_urls, min_overlap=min_overlap, weight_threshold=weight_threshold)
+
+    return _tfidf_cosine_overlap_graph(data, min_count=min_urls, min_overlap=min_overlap)
 
 
 def create_network(
