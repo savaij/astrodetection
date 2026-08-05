@@ -33,12 +33,12 @@ _TRACKING_PARAMS = frozenset({
 })
 
 
-def create_coSharing_graph(data, type_column='row_type', userid_col='screen name', feature_col='retweeted user', min_retweets=2, min_overlap=2, fast_graph=False, weight_threshold=0.9):
+def create_coSharing_graph(data, type_column='row_type', userid_col='screen name', feature_col='retweeted user', min_retweets=3, min_overlap=3, fast_graph=False, weight_threshold=0.9):
     """
     Build a co-sharing similarity graph among users based on shared retweet targets.
 
-    Each node represents an active user (more than `min_retweets` total retweets). An edge between
-    two users is added when they share more than `min_overlap` retweeted accounts in
+    Each node represents an active user (at least `min_retweets` total retweets). An edge between
+    two users is added when they share at least `min_overlap` retweeted accounts in
     common, weighted by the TF-IDF cosine similarity of their retweet vectors.
 
     Algorithm steps:
@@ -46,9 +46,9 @@ def create_coSharing_graph(data, type_column='row_type', userid_col='screen name
         2. Count how many times each user retweeted each account (frequency matrix).
         3. Compute TF-IDF weights over the full user population so that IDF reflects
            the global popularity of each retweeted account.
-        4. Restrict similarity computation to active users (> `min_retweets` total retweets).
+        4. Restrict similarity computation to active users (>= `min_retweets` total retweets).
         5. Compute pairwise cosine similarity among active users' TF-IDF vectors.
-        6. Apply a hard overlap filter: retain only pairs sharing more than
+        6. Apply a hard overlap filter: retain only pairs sharing at least
            `min_overlap` distinct retweeted accounts.
         7. Build an undirected weighted graph from the resulting adjacency matrix and
            remove self-loops and isolated nodes.
@@ -65,10 +65,9 @@ def create_coSharing_graph(data, type_column='row_type', userid_col='screen name
             Default is 'retweeted user'.
         min_retweets (int): Minimum total number of retweets a user must have made to be
             considered active and included in the similarity computation. IDF is still
-            computed over all users regardless of this threshold. Default is 2.
-        min_overlap (int): Exclusive lower bound on the number of distinct retweeted
-            accounts that two users must share for an edge to be included in the graph.
-            Default is 2 (thus requiring at least 3 shared accounts).
+            computed over all users regardless of this threshold. Default is 3.
+        min_overlap (int): Minimum number of distinct retweeted accounts that two users
+            must share for an edge to be included in the graph. Default is 3.
         fast_graph (bool): If True, use the memory-bounded builder that applies the
             weight threshold during construction (see `weight_threshold`) instead of
             materializing dense N x N matrices. The resulting graph is NOT the complete
@@ -121,8 +120,8 @@ def _tfidf_cosine_overlap_graph(data, min_count, min_overlap):
         min_count (int): Minimum total events a user must have to be considered
             active and included in the similarity computation. IDF is still
             computed over all users regardless of this threshold.
-        min_overlap (int): Exclusive lower bound on the number of distinct feature
-            values that two users must share for an edge to be included.
+        min_overlap (int): Minimum number of distinct feature values that two users
+            must share for an edge to be included.
 
     Returns:
         nx.Graph: Undirected weighted graph of active users. Edge weights are
@@ -142,9 +141,9 @@ def _tfidf_cosine_overlap_graph(data, min_count, min_overlap):
     # Count how many times each user produced each feature (instead of binary 1)
     data = data.groupby(['userid', 'feature_shared'], as_index=False).size().rename(columns={'size': 'value'})
 
-    # Identify active users (>min_count total events) BEFORE filtering, so IDF is computed over all users
+    # Identify active users (>=min_count total events) BEFORE filtering, so IDF is computed over all users
     user_totals = data.groupby('userid')['value'].sum()
-    active_users = set(user_totals[user_totals > min_count].index.astype(str))
+    active_users = set(user_totals[user_totals >= min_count].index.astype(str))
 
     ids = dict(zip(list(data.feature_shared.unique()), list(range(data.feature_shared.unique().shape[0]))))
     data['feature_shared'] = data['feature_shared'].apply(lambda x: ids[x]).astype(int)
@@ -165,7 +164,7 @@ def _tfidf_cosine_overlap_graph(data, min_count, min_overlap):
     vectorizer = TfidfTransformer()
     tfidf_matrix = vectorizer.fit_transform(sparse_matrix)
 
-    # Now filter to active users only (>min_count events) for similarity computation
+    # Now filter to active users only (>=min_count events) for similarity computation
     userid_inv = {v: k for k, v in userid.items()}  # int index -> username
     active_indices = sorted([userid[u] for u in active_users if u in userid])
     active_usernames = [userid_inv[i] for i in active_indices]
@@ -183,8 +182,8 @@ def _tfidf_cosine_overlap_graph(data, min_count, min_overlap):
 
     similarities = cosine_similarity(tfidf_active, dense_output=False)
 
-    # Apply hard overlap threshold: retain only pairs sharing more than min_overlap features
-    overlap_mask = (overlap > min_overlap).astype(np.float32)
+    # Apply hard overlap threshold: retain only pairs sharing at least min_overlap features
+    overlap_mask = (overlap >= min_overlap).astype(np.float32)
     np.fill_diagonal(overlap_mask, 0)  # remove self-loops
     similarities = csr_matrix(similarities.toarray() * overlap_mask)
 
@@ -222,8 +221,8 @@ def _tfidf_cosine_overlap_graph_fast(data, min_count, min_overlap, weight_thresh
             'feature_shared' (hashable).
         min_count (int): Minimum total events a user must have to be considered active.
             IDF is still computed over all users regardless of this threshold.
-        min_overlap (int): Exclusive lower bound on the number of distinct feature
-            values that two users must share for an edge to be included.
+        min_overlap (int): Minimum number of distinct feature values that two users
+            must share for an edge to be included.
         weight_threshold (float): Minimum edge weight (cosine similarity) to keep. Edges
             below this value are never generated.
 
@@ -249,9 +248,9 @@ def _tfidf_cosine_overlap_graph_fast(data, min_count, min_overlap, weight_thresh
     # Count how many times each user produced each feature (instead of binary 1)
     data = data.groupby(['userid', 'feature_shared'], as_index=False).size().rename(columns={'size': 'value'})
 
-    # Identify active users (>min_count total events) BEFORE filtering, so IDF is computed over all users
+    # Identify active users (>=min_count total events) BEFORE filtering, so IDF is computed over all users
     user_totals = data.groupby('userid')['value'].sum()
-    active_users = set(user_totals[user_totals > min_count].index.astype(str))
+    active_users = set(user_totals[user_totals >= min_count].index.astype(str))
 
     # Same encoding as _tfidf_cosine_overlap_graph: integers assigned in order of
     # first appearance, which determines node order in the final graph.
@@ -319,7 +318,7 @@ def _tfidf_cosine_overlap_graph_fast(data, min_count, min_overlap, weight_thresh
 
         # overlap only for the surviving (few) pairs: no dense matrix
         ov = np.asarray(binary_active[gi].multiply(binary_active[gj]).sum(axis=1)).ravel()
-        ok = ov > min_overlap
+        ok = ov >= min_overlap
         if not ok.any():
             continue
 
@@ -347,7 +346,7 @@ def _tfidf_cosine_overlap_graph_fast(data, min_count, min_overlap, weight_thresh
     return G
 
 
-def create_coActivity_graph(data, userid_col='screen name', timestamp_col='tweet_date', bin_minutes=5, min_activity=2, min_overlap=2, fast_graph=False, weight_threshold=0.9):
+def create_coActivity_graph(data, userid_col='screen name', timestamp_col='tweet_date', bin_minutes=5, min_activity=3, min_overlap=3, fast_graph=False, weight_threshold=0.9):
     """
     Build a co-activity similarity graph among users based on shared temporal activity bins.
 
@@ -365,9 +364,9 @@ def create_coActivity_graph(data, userid_col='screen name', timestamp_col='tweet
         3. Count how many times each user was active in each bin (frequency matrix).
         4. Compute TF-IDF weights over the full user population so that IDF down-weights common
            bins (everyone active) and up-weights rare bins shared by few users.
-        5. Restrict similarity computation to active users (> `min_activity` total events).
+        5. Restrict similarity computation to active users (>= `min_activity` total events).
         6. Compute pairwise cosine similarity and apply a hard overlap filter, retaining only
-           pairs sharing more than `min_overlap` distinct time bins.
+           pairs sharing at least `min_overlap` distinct time bins.
         7. Build an undirected weighted graph; remove self-loops and isolated nodes.
 
     Args:
@@ -379,10 +378,9 @@ def create_coActivity_graph(data, userid_col='screen name', timestamp_col='tweet
         bin_minutes (int): Size of the temporal bin in minutes. Default is 5.
         min_activity (int): Minimum total number of events a user must have to be considered
             active and included in the similarity computation. IDF is still computed over all
-            users regardless of this threshold. Default is 2.
-        min_overlap (int): Exclusive lower bound on the number of distinct time bins that two
-            users must share for an edge to be included in the graph. Default is 2 (thus
-            requiring at least 3 shared bins).
+            users regardless of this threshold. Default is 3.
+        min_overlap (int): Minimum number of distinct time bins that two users must share for an
+            edge to be included in the graph. Default is 3.
         fast_graph (bool): If True, use the memory-bounded builder that applies the weight
             threshold during construction (see `weight_threshold`) instead of materializing
             dense N x N matrices. The resulting graph is NOT the complete graph: edges with
@@ -493,7 +491,7 @@ def _normalize_url(url, granularity='url', strip_tracking_params=True):
     return f'{host}{path}{query}'
 
 
-def create_coURL_graph(data, userid_col='screen name', text_col='tweet', url_col=None, type_column=None, include_types=None, url_granularity='url', strip_tracking_params=True, exclude_domains=None, min_urls=2, min_overlap=2, fast_graph=False, weight_threshold=0.9):
+def create_coURL_graph(data, userid_col='screen name', text_col='tweet', url_col=None, type_column=None, include_types=None, url_granularity='url', strip_tracking_params=True, exclude_domains=None, min_urls=3, min_overlap=3, fast_graph=False, weight_threshold=0.9):
     """
     Build a co-URL similarity graph among users based on shared links.
 
@@ -513,9 +511,9 @@ def create_coURL_graph(data, userid_col='screen name', text_col='tweet', url_col
         5. Count how many times each user shared each URL (frequency matrix).
         6. Compute TF-IDF weights over the full user population, so that IDF
            down-weights links everybody shares and up-weights rare ones.
-        7. Restrict similarity computation to active users (> `min_urls` total URLs).
+        7. Restrict similarity computation to active users (>= `min_urls` total URLs).
         8. Compute pairwise cosine similarity and apply a hard overlap filter,
-           retaining only pairs sharing more than `min_overlap` distinct URLs.
+           retaining only pairs sharing at least `min_overlap` distinct URLs.
         9. Build an undirected weighted graph; remove self-loops and isolated nodes.
 
     Args:
@@ -545,12 +543,11 @@ def create_coURL_graph(data, userid_col='screen name', text_col='tweet', url_col
             signal independent of co-retweeting. Default is None.
         min_urls (int): Minimum total number of URLs a user must have shared to be
             considered active and included in the similarity computation. IDF is still
-            computed over all users regardless of this threshold. Default is 2.
-        min_overlap (int): Exclusive lower bound on the number of distinct URLs that two
-            users must share for an edge to be included in the graph. Default is 2 (thus
-            requiring at least 3 shared URLs), for consistency with the sibling builders;
-            URL sharing is sparser than retweeting, so this is the first parameter to lower
-            when the graph comes out empty.
+            computed over all users regardless of this threshold. Default is 3.
+        min_overlap (int): Minimum number of distinct URLs that two users must share for
+            an edge to be included in the graph. Default is 3, for consistency with the
+            sibling builders; URL sharing is sparser than retweeting, so this is the first
+            parameter to lower when the graph comes out empty.
         fast_graph (bool): If True, use the memory-bounded builder that applies the
             weight threshold during construction (see `weight_threshold`) instead of
             materializing dense N x N matrices. The resulting graph is NOT the complete
