@@ -105,6 +105,30 @@ def create_coSharing_graph(data, type_column='row_type', userid_col='screen name
     return _tfidf_cosine_overlap_graph(data[['userid', 'feature_shared']], min_count=min_retweets, min_overlap=min_overlap)
 
 
+def _keep_shared_features(data):
+    """
+    Keep only the rows whose `feature_shared` value appears in more than one row.
+
+    NB: this counts ROWS, not distinct users (a feature used 5 times by a single user
+    passes). Changing the filter would change the IDF and thus all similarities, so the
+    behaviour is preserved exactly as it was when duplicated inside the two builders.
+
+    The operation is idempotent: it drops whole features, which leaves the row counts of
+    the surviving features untouched. Callers may therefore apply it before handing the
+    table to a builder that applies it again.
+
+    Args:
+        data (pd.DataFrame): Long-format table with at least the columns 'userid' and
+            'feature_shared'. Extra columns are ignored and carried through.
+
+    Returns:
+        pd.DataFrame: The subset of rows whose feature is shared.
+    """
+
+    feat_rows = data.groupby('feature_shared')['userid'].count()
+    return data.loc[data['feature_shared'].isin(feat_rows.index[feat_rows > 1])]
+
+
 def _tfidf_cosine_overlap_graph(data, min_count, min_overlap):
     """
     Build a TF-IDF cosine-similarity graph among users from a long-format
@@ -130,8 +154,7 @@ def _tfidf_cosine_overlap_graph(data, min_count, min_overlap):
 
     data = data.copy()
 
-    temp = data.groupby('feature_shared', as_index=False).count()
-    data = data.loc[data['feature_shared'].isin(temp.loc[temp['userid']>1]['feature_shared'].to_list())] #keep only features shared by more than 1 user
+    data = _keep_shared_features(data) #keep only features used in more than 1 row
 
     # Nothing shared: bail out before TfidfTransformer, which rejects a (0, 0) matrix.
     # Mirrors the early return in _tfidf_cosine_overlap_graph_fast.
@@ -233,13 +256,7 @@ def _tfidf_cosine_overlap_graph_fast(data, min_count, min_overlap, weight_thresh
 
     data = data[['userid', 'feature_shared']]
 
-    # Keep only features with more than one row.
-    # NB: like _tfidf_cosine_overlap_graph, this counts ROWS, not distinct users
-    # (a feature used 5 times by a single user passes). We replicate the code, not
-    # the comment: changing the filter would change the IDF and thus all similarities.
-    feat_rows = data.groupby('feature_shared')['userid'].count()
-    keep = feat_rows.index[feat_rows > 1]
-    data = data.loc[data['feature_shared'].isin(keep)]
+    data = _keep_shared_features(data)
     if data.empty:
         G = nx.Graph()
         G.graph['weight_threshold'] = weight_threshold
@@ -491,7 +508,7 @@ def _normalize_url(url, granularity='url', strip_tracking_params=True):
     return f'{host}{path}{query}'
 
 
-def create_coURL_graph(data, userid_col='screen name', text_col='tweet', url_col=None, type_column=None, include_types=None, url_granularity='url', strip_tracking_params=True, exclude_domains=None, min_urls=3, min_overlap=3, fast_graph=False, weight_threshold=0.9):
+def create_coURL_graph(data, userid_col='screen name', text_col='tweet', url_col=None, type_column=None, include_types=None, url_granularity='url', strip_tracking_params=True, exclude_domains=None, min_urls=3, min_url_posts=2, min_overlap=3, fast_graph=False, weight_threshold=0.9):
     """
     Build a co-URL similarity graph among users based on shared links.
 
@@ -511,7 +528,9 @@ def create_coURL_graph(data, userid_col='screen name', text_col='tweet', url_col
         5. Count how many times each user shared each URL (frequency matrix).
         6. Compute TF-IDF weights over the full user population, so that IDF
            down-weights links everybody shares and up-weights rare ones.
-        7. Restrict similarity computation to active users (>= `min_urls` total URLs).
+        7. Restrict similarity computation to active users. Both conditions must hold:
+           at least `min_urls` URL events AND at least `min_url_posts` distinct posts
+           carrying one of those URLs.
         8. Compute pairwise cosine similarity and apply a hard overlap filter,
            retaining only pairs sharing at least `min_overlap` distinct URLs.
         9. Build an undirected weighted graph; remove self-loops and isolated nodes.
@@ -544,6 +563,16 @@ def create_coURL_graph(data, userid_col='screen name', text_col='tweet', url_col
         min_urls (int): Minimum total number of URLs a user must have shared to be
             considered active and included in the similarity computation. IDF is still
             computed over all users regardless of this threshold. Default is 3.
+        min_url_posts (int): Minimum number of distinct posts (one row = one post) that
+            must carry at least one of the user's shared URLs. Cumulative with
+            `min_urls`: a single post packed with links no longer makes an account
+            eligible, since it carries no evidence of repetition over time. Like
+            `min_urls`, this is counted on the URLs that survive step 4, and IDF is
+            still computed over all users. With `min_urls=2, min_url_posts=2` this
+            accepts `post 1: URL A` + `post 2: URL A` (two events, two posts) and
+            rejects `post 1: URL A + URL B` (two events, one post) as well as
+            `post 1: URL A + URL A` (deduplicated: one event, one post). Pass 1 to
+            reproduce the eligibility criterion of versions < 0.3.0. Default is 2.
         min_overlap (int): Minimum number of distinct URLs that two users must share for
             an edge to be included in the graph. Default is 3, for consistency with the
             sibling builders; URL sharing is sparser than retweeting, so this is the first
@@ -570,6 +599,9 @@ def create_coURL_graph(data, userid_col='screen name', text_col='tweet', url_col
         is emitted when most extracted links are t.co: in that case pass `url_col` with
         the expanded URLs.
     """
+
+    if not isinstance(min_url_posts, (int, np.integer)) or min_url_posts < 1:
+        raise ValueError("min_url_posts must be an integer >= 1")
 
     data = data.copy()
 
@@ -623,7 +655,7 @@ def create_coURL_graph(data, userid_col='screen name', text_col='tweet', url_col
 
         data = data.drop_duplicates(subset=['_row_id', 'feature_shared'])
 
-    data = data[['userid', 'feature_shared']]
+    data = data[['userid', 'feature_shared', '_row_id']]
 
     # Guard: the shared builders reach TfidfTransformer.fit_transform on a (0, 0)
     # matrix before their own early return.
@@ -633,10 +665,30 @@ def create_coURL_graph(data, userid_col='screen name', text_col='tweet', url_col
             G.graph['weight_threshold'] = weight_threshold
         return G
 
-    if fast_graph:
-        return _tfidf_cosine_overlap_graph_fast(data, min_count=min_urls, min_overlap=min_overlap, weight_threshold=weight_threshold)
+    # Distinct posts counted on the URLs that survive the shared-feature filter, for
+    # consistency with min_urls (which the builders apply after that same filter).
+    eligible_users = None
+    if min_url_posts > 1:
+        n_posts = _keep_shared_features(data).groupby('userid')['_row_id'].nunique()
+        eligible_users = set(n_posts.index[n_posts >= min_url_posts].astype(str))
 
-    return _tfidf_cosine_overlap_graph(data, min_count=min_urls, min_overlap=min_overlap)
+    events = data[['userid', 'feature_shared']]
+
+    if fast_graph:
+        G = _tfidf_cosine_overlap_graph_fast(events, min_count=min_urls, min_overlap=min_overlap, weight_threshold=weight_threshold)
+    else:
+        G = _tfidf_cosine_overlap_graph(events, min_count=min_urls, min_overlap=min_overlap)
+
+    if eligible_users is not None:
+        # Equivalent to filtering inside the builder, without adding a parameter to it:
+        # IDF has already been fitted over the whole population, and both the cosine
+        # weight and the overlap count are pairwise, so they do not depend on which rows
+        # were selected. Every edge touching an ineligible user disappears with its node.
+        # The second isolates pass catches users whose only edges pointed at one.
+        G.remove_nodes_from([n for n in list(G) if str(n) not in eligible_users])
+        G.remove_nodes_from(list(nx.isolates(G)))
+
+    return G
 
 
 def create_network(
