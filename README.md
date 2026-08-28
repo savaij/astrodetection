@@ -36,7 +36,7 @@ pip install "astrodetection[light]"
 You can import directly the main functions:
 
 ```python
-from astrodetection import semantic_faiss, prepare_input_data, compute_bot_likelihood_metrics, create_network
+from astrodetection import semantic_faiss, prepare_input_data, compute_bot_likelihood_metrics, create_network, copypasta_score_hub
 ```
 
 Or use them directly:
@@ -70,10 +70,19 @@ matches, df_cluster = astrodetection.semantic_faiss(
     threshold_semantic=0.9
 ) #function taken from D3LTA 
 
-scores = astrodetection.compute_bot_likelihood_metrics(df, matches=matches)
+# Create the raw post-similarity network and measure its largest component
+network = astrodetection.create_network(matches, df, return_sigma=False)
+copypasta_hub = astrodetection.copypasta_score_hub(network, df)
 
-# Create a network
-network = astrodetection.create_network(matches, df)
+# The same indicator is also available in the combined metrics
+scores = astrodetection.compute_bot_likelihood_metrics(
+    df,
+    matches=matches,
+    G_copypasta=network,
+)
+
+# Create the interactive visualization when needed
+network_viz = astrodetection.create_network(matches, df)
 ```
 
 # New changes
@@ -83,3 +92,5 @@ network = astrodetection.create_network(matches, df)
 2. _`compute_bot_likelihood_metrics`_ function can now take columns' names as arguments for more customization
 
 3. _`compute_bot_likelihood_metrics`_ now returns _`high_following_followers_ratio (%)`_, the share of rows whose following/followers ratio exceeds _fw_ratio_threshold_ (default 10).
+
+4. _`copypasta_score_hub`_ returns the percentage of all original posts belonging to the largest connected component of a post-similarity network. By default it retains every duplicate type and every edge already present in the network.

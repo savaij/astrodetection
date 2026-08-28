@@ -35,6 +35,96 @@ def copypasta_score(matches, df, threshold=1):
     return score
 
 
+def copypasta_score_hub(
+    G: nx.Graph,
+    df: pd.DataFrame,
+    threshold: Optional[float] = None,
+    weight_col: str = "weight",
+    dup_types: Optional[Union[str, Iterable[str]]] = None,
+) -> float:
+    """Calculate the percentage of posts in the largest similarity component.
+
+    ``G`` is the post-level network returned by ``create_network(...,
+    return_sigma=False)``. Duplicate relationships are treated as undirected,
+    regardless of the concrete NetworkX graph type supplied by the caller.
+
+    Args:
+        G: Post-level NetworkX graph. Node identifiers must correspond to the
+            index of ``df``.
+        df: Original post DataFrame. Every row contributes to the denominator,
+            including posts that do not occur in ``G``.
+        threshold: Optional minimum edge weight. When ``None`` (default), all
+            eligible edges are retained.
+        weight_col: Edge attribute containing the similarity score. Defaults to
+            ``"weight"``, the attribute created by ``create_network``.
+        dup_types: Optional duplicate type or iterable of duplicate types to
+            retain. When ``None`` (default), all edge types are retained.
+
+    Returns:
+        Percentage of rows in ``df`` whose post IDs belong to the largest
+        connected component. Returns 0 for an empty DataFrame or when no
+        eligible edge remains.
+    """
+
+    if not isinstance(G, nx.Graph):
+        raise TypeError(
+            "G must be a NetworkX graph; call create_network with "
+            "return_sigma=False"
+        )
+
+    if df.empty:
+        return 0.0
+
+    if not df.index.is_unique:
+        raise ValueError("df must be indexed by unique post IDs")
+
+    df_node_ids = [str(node_id) for node_id in df.index]
+    if len(set(df_node_ids)) != len(df_node_ids):
+        raise ValueError("df post IDs must remain unique when converted to strings")
+    valid_nodes = set(df_node_ids)
+
+    if isinstance(dup_types, str):
+        allowed_types = {dup_types}
+    elif dup_types is None:
+        allowed_types = None
+    else:
+        allowed_types = set(dup_types)
+
+    # semantic_faiss emits unordered pairs. create_network stores them in a
+    # DiGraph for visualization, but direction has no meaning for components.
+    filtered_graph = nx.Graph()
+    for source, target, edge_data in G.edges(data=True):
+        source = str(source)
+        target = str(target)
+
+        # Only posts in the original DataFrame can contribute to the numerator.
+        if source not in valid_nodes or target not in valid_nodes or source == target:
+            continue
+
+        if allowed_types is not None and edge_data.get("dup_type") not in allowed_types:
+            continue
+
+        if threshold is not None:
+            edge_weight = edge_data.get(weight_col)
+            if edge_weight is None or pd.isna(edge_weight):
+                continue
+            try:
+                if edge_weight < threshold:
+                    continue
+            except TypeError as exc:
+                raise TypeError(
+                    f"Edge attribute {weight_col!r} must contain numeric values"
+                ) from exc
+
+        filtered_graph.add_edge(source, target, **edge_data)
+
+    if filtered_graph.number_of_edges() == 0:
+        return 0.0
+
+    largest_component = max(nx.connected_components(filtered_graph), key=len)
+    return len(largest_component) / len(df) * 100
+
+
 def get_top_users(df, percent=1, username_col: str = 'username'):
     """Calculate the percentage of posts coming from the top *percent* most active users.
 
@@ -460,13 +550,15 @@ def compute_bot_likelihood_metrics(
     tweet_date_col: str = 'tweet_date',
     tweet_text_col: str = 'tweet',
     type_col: str = 'row_type',
-
+    G_copypasta: nx.Graph = None,
+    copypasta_hub_threshold: Optional[float] = None,
+    copypasta_hub_dup_types: Optional[Union[str, Iterable[str]]] = None,
 ) -> dict:
     """
     Combine multiple behavioral metrics to estimate the likelihood that a set of accounts consists of bots
     or is engaged in coordinated inauthentic behavior.
 
-    Computes up to 14 indicators. Each metric is included in the result dict only when the required
+    Computes up to 15 indicators. Each metric is included in the result dict only when the required
     columns are present in `df` (or the required arguments are provided); otherwise its value is None.
 
     Parameters:
@@ -475,6 +567,13 @@ def compute_bot_likelihood_metrics(
             `semantic_faiss`). When provided, the copypasta score is computed.
         matches_threshold (int): Minimum number of match occurrences to count a post as duplicated
             for the copypasta score. Default is 1.
+        G_copypasta (nx.Graph, optional): Post-level similarity graph returned by
+            `create_network(..., return_sigma=False)`. Required to compute the
+            copypasta hub score.
+        copypasta_hub_threshold (float, optional): Minimum edge similarity used for
+            the copypasta hub score. When None, all graph edges are retained.
+        copypasta_hub_dup_types (str or iterable, optional): Duplicate type or types
+            retained for the copypasta hub score. When None, all types are retained.
         num_digits (int): Number of trailing digits in a username that qualifies it as a
             "default handle" (e.g. auto-generated). Default is 5.
         top_x_percent (int): Percentage of most-active users to consider for the top-user dominance
@@ -514,6 +613,8 @@ def compute_bot_likelihood_metrics(
     Returns:
         dict: Dictionary with the following keys (value is None when data is unavailable):
             - 'copypasta_score (%)': % of posts appearing in at least `matches_threshold` duplicate pairs.
+            - 'copypasta_hub_score (%)': % of all posts in `df` belonging to the
+              largest connected component of `G_copypasta`.
             - 'top_users_post_percent (%)': % of posts authored by the top `top_x_percent`% of users.
             - 'top_users_count': Absolute number of users in the top-percent group.
             - 'zero_followers_and_following (%)': % of rows where both followers and following < 1.
@@ -548,6 +649,20 @@ def compute_bot_likelihood_metrics(
     # 1. Copypasta Score (solo se fornito `matches`)
     if matches is not None:
         results['copypasta_score (%)'] = round(copypasta_score(matches, df, matches_threshold), 2)
+
+    # 1.1 Copypasta Hub Score (largest post-similarity component / all original posts)
+    if G_copypasta is not None:
+        results['copypasta_hub_score (%)'] = round(
+            copypasta_score_hub(
+                G_copypasta,
+                df,
+                threshold=copypasta_hub_threshold,
+                dup_types=copypasta_hub_dup_types,
+            ),
+            2,
+        )
+    else:
+        results['copypasta_hub_score (%)'] = None
 
     # 2. Top User Dominance
     top_users_percent, top_users_n = get_top_users(df, top_x_percent, username_col=username_col)

@@ -706,7 +706,8 @@ def create_network(
     extra_meta_prefix: Optional[str] = None,               # e.g., "meta_"
     extra_meta_rename: Optional[Dict[str, str]] = None,    # rename extras {old:new}
     keep_na: bool = False,                                  # drop None/NaN extras by default
-    return_sigma = True
+    return_sigma=True,
+    weight_col: str = 'score',
 ):
     """
     Create a directed graph representing tweet relationships and metadata.
@@ -738,11 +739,18 @@ def create_network(
     extra_meta_rename : dict mapping {original_column: new_key_name}.
     keep_na : bool, default False
         If False, drop extras whose value is None/NaN.
+    return_sigma : bool, default True
+        Return an interactive Sigma visualization. If False, return the raw
+        post-level NetworkX graph without constructing a Sigma object.
+    weight_col : str, default 'score'
+        Column in match_df to store as the edge ``weight``. Use ``score`` for
+        semantic cosine similarity or ``score_lev`` for grapheme similarity.
 
     Returns
     -------
-    Sigma
-        A Sigma visualization object representing the network.
+    Sigma or nx.DiGraph
+        A Sigma visualization object, or the underlying post-level graph when
+        ``return_sigma=False``.
     """
     graph = nx.DiGraph()
 
@@ -863,14 +871,16 @@ def create_network(
             source_id,
             target_id,
             dup_type=r.get('dup_type', "default"),
-            weight=r['score'],
+            weight=r[weight_col],
         )
 
-    sigma_viz = Sigma(
+    if not return_sigma:
+        return graph
+
+    return Sigma(
         graph,
         edge_color="dup_type",
         edge_weight="weight",
         node_size="likes",
         node_size_range=(3, 15),
     )
-    return sigma_viz if return_sigma else graph
