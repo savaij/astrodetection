@@ -355,8 +355,15 @@ def create_index_cosine(df_embeddings: pd.DataFrame):
     Returns:
         index: A faiss index which can be used to compute cosine distances more efficiently
     """
-    embeddings = df_embeddings.to_numpy()
-    ids = list(df_embeddings.index)
+    # FAISS' Python bindings require C-contiguous float32 vectors and an
+    # int64 NumPy array for explicit IDs.  Passing the index as a Python list
+    # used to be accepted by older releases, but fails in faiss-cpu 1.15.0
+    # because ``add_with_ids`` accesses ``ids.shape`` directly.
+    embeddings = np.ascontiguousarray(
+        df_embeddings.to_numpy(),
+        dtype=np.float32,
+    )
+    ids = np.asarray(df_embeddings.index, dtype=np.int64)
 
     # cosine similarity index...
     vector_dimension = embeddings.shape[1]
@@ -365,12 +372,7 @@ def create_index_cosine(df_embeddings: pd.DataFrame):
     index = faiss.IndexIDMap(index_flat)
 
     # for cosine similarity, need of normalisation
-    try:
-        faiss.normalize_L2(embeddings)
-    except:
-        embeddings = embeddings.copy(order="C")
-        faiss.normalize_L2(embeddings)
-        print("C contiguous problem solved")
+    faiss.normalize_L2(embeddings)
 
     # add embeddings & ids
     index.add_with_ids(embeddings, ids)
