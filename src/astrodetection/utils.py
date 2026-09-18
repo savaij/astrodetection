@@ -197,7 +197,13 @@ def account_activity_evenness(df: pd.DataFrame, username_col: str = 'username') 
     return _evenness(user_post_counts)
 
 
-def calculate_zero_fw_score(df: pd.DataFrame, followers_col: str = 'followers', following_col: str = 'following', username_col: str = 'username') -> float:
+def calculate_zero_fw_score(
+    df: pd.DataFrame,
+    followers_col: str = 'followers',
+    following_col: str = 'following',
+    username_col: str = 'username',
+    deduplicate_accounts: bool = False,
+) -> float:
     """
     Calculate the percentage of rows where both 'followers' and 'following' are less than 1.
     
@@ -208,14 +214,23 @@ def calculate_zero_fw_score(df: pd.DataFrame, followers_col: str = 'followers', 
     Returns:
         tuple: zero_score_percent where zero_score_percent is rounded to 4 decimal places.
     """
-   # df_unique = df.drop_duplicates(subset=[username_col]).copy()
+    if deduplicate_accounts and username_col in df.columns:
+        df = df.drop_duplicates(subset=[username_col]).copy()
 
     mask = (df[followers_col] < 1) & (df[following_col] < 1)
     zero_score = len(df[mask]) / len(df) * 100 if len(df) > 0 else 0
 
     return zero_score
 
-def calculate_low_fw_score(df: pd.DataFrame, followers_col: str = 'followers', following_col: str = 'following', username_col: str = 'username', n_followers: int = 10, n_following: int = 10) -> float:
+def calculate_low_fw_score(
+    df: pd.DataFrame,
+    followers_col: str = 'followers',
+    following_col: str = 'following',
+    username_col: str = 'username',
+    n_followers: int = 10,
+    n_following: int = 10,
+    deduplicate_accounts: bool = False,
+) -> float:
     """
     Calculate the percentage of rows where both 'followers' and 'following' are less than specified thresholds.
     
@@ -227,12 +242,22 @@ def calculate_low_fw_score(df: pd.DataFrame, followers_col: str = 'followers', f
         tuple: (name, low_fw_score_percent) where low_fw_score_percent is rounded to 4 decimal places.
     """
 
+    if deduplicate_accounts and username_col in df.columns:
+        df = df.drop_duplicates(subset=[username_col]).copy()
+
     mask = (df[followers_col] < n_followers) & (df[following_col] < n_following)
     low_fw_score = len(df[mask]) / len(df) * 100 if len(df) > 0 else 0
 
     return low_fw_score
 
-def following_followers_ratio_score(df: pd.DataFrame, followers_col: str = 'followers', following_col: str = 'following', username_col: str = 'username', ratio_threshold: float = 10) -> float:
+def following_followers_ratio_score(
+    df: pd.DataFrame,
+    followers_col: str = 'followers',
+    following_col: str = 'following',
+    username_col: str = 'username',
+    ratio_threshold: float = 10,
+    deduplicate_accounts: bool = False,
+) -> float:
     """
     Calculate the percentage of rows where following / followers exceeds `ratio_threshold`.
 
@@ -249,6 +274,9 @@ def following_followers_ratio_score(df: pd.DataFrame, followers_col: str = 'foll
     if len(df) == 0:
         return 0
 
+    if deduplicate_accounts and username_col in df.columns:
+        df = df.drop_duplicates(subset=[username_col]).copy()
+
     # followers == 0 with following > 0 yields inf (counted as suspicious);
     # 0 / 0 yields NaN, which never satisfies the comparison but stays in the denominator.
     ratio = df[following_col] / df[followers_col]
@@ -256,7 +284,13 @@ def following_followers_ratio_score(df: pd.DataFrame, followers_col: str = 'foll
 
     return mask.sum() / len(df) * 100
 
-def no_image_description_score(df: pd.DataFrame, bio_col: str = 'bio', avatar_col: str = 'avatar', username_col: str = 'username') -> float:
+def no_image_description_score(
+    df: pd.DataFrame,
+    bio_col: str = 'bio',
+    avatar_col: str = 'avatar',
+    username_col: str = 'username',
+    deduplicate_accounts: bool = False,
+) -> float:
     """
     Calculate the percentage of users with no bio and a default/empty/missing avatar.
     
@@ -268,7 +302,8 @@ def no_image_description_score(df: pd.DataFrame, bio_col: str = 'bio', avatar_co
         tuple: (name, no_image_description_percent) where the percent is rounded to 4 decimal places.
     """
 
-    #df_unique = df.drop_duplicates(subset=[username_col]).copy()
+    if deduplicate_accounts and username_col in df.columns:
+        df = df.drop_duplicates(subset=[username_col]).copy()
 
     mask_desc = (df[bio_col] == "") | (df[bio_col].isna())
 
@@ -283,7 +318,13 @@ def no_image_description_score(df: pd.DataFrame, bio_col: str = 'bio', avatar_co
 
     return zero_score
 
-def over_tot_post_per_day(df: pd.DataFrame, threshold: int = 70, tweets_per_day_col: str = 'tweets_per_day', username_col: str = 'username') -> float:
+def over_tot_post_per_day(
+    df: pd.DataFrame,
+    threshold: int = 70,
+    tweets_per_day_col: str = 'tweets_per_day',
+    username_col: str = 'username',
+    deduplicate_accounts: bool = False,
+) -> float:
     """
     Calculate the percentage of users that post more than a specified number of posts per day.
 
@@ -291,7 +332,9 @@ def over_tot_post_per_day(df: pd.DataFrame, threshold: int = 70, tweets_per_day_
         df (pd.DataFrame): The input DataFrame, which must have 'tweet_per_day' column
         threshold (int): The minimum number of posts per day to consider. Default is 70
     """
-    #df_unique = df.drop_duplicates(subset=[username_col]).copy()
+    if deduplicate_accounts and username_col in df.columns:
+        df = df.drop_duplicates(subset=[username_col]).copy()
+
     mask = df[tweets_per_day_col] > threshold
     return mask.value_counts(normalize=True).get(True, 0) * 100
 
@@ -309,7 +352,12 @@ def _check_username_digits(username: str, num_digits: int) -> bool:
     pattern = r'\d{' + str(num_digits) + r'}$'
     return bool(re.search(pattern, username))
 
-def default_handle_score(df: pd.DataFrame, num_digits: int = 5, username_col: str = 'username') -> float:
+def default_handle_score(
+    df: pd.DataFrame,
+    num_digits: int = 5,
+    username_col: str = 'username',
+    deduplicate_accounts: bool = False,
+) -> float:
     """
     Calculate the percentage of usernames that end with a given number of digits.
     
@@ -320,7 +368,8 @@ def default_handle_score(df: pd.DataFrame, num_digits: int = 5, username_col: st
     Returns:
         tuple: (name, default_handle_percent) rounded to 2 decimal places.
     """
-    #df_unique = df.drop_duplicates(subset=[username_col]).copy()
+    if deduplicate_accounts and username_col in df.columns:
+        df = df.drop_duplicates(subset=[username_col]).copy()
 
     matches = df[username_col].apply(lambda x: _check_username_digits(x, num_digits))
     if matches.any():
@@ -335,14 +384,23 @@ def check_recent_account(
     account_creation_col: str = 'createdDate',
     tweet_date_col: str = 'tweet_date',
     age_days_threshold: int = 30,
-    username_col: str = 'username'
+    username_col: str = 'username',
+    deduplicate_accounts: bool = False,
     ):
     """
     Calculate the percentage of accounts created within a certain number of days before the tweet date.
     """
-    #df_unique = df.drop_duplicates(subset=[username_col]).copy()
+    df = df.copy()
     df[tweet_date_col] = pd.to_datetime(df[tweet_date_col]).dt.tz_localize(None)
     df[account_creation_col] = pd.to_datetime(df[account_creation_col]).dt.tz_localize(None)
+
+    if deduplicate_accounts and username_col in df.columns:
+        # Keep the oldest post for each account, so the account is evaluated at
+        # its minimum observed age (delta_days).
+        df = df.sort_values(tweet_date_col, kind='stable').drop_duplicates(
+            subset=[username_col],
+            keep='first',
+        )
 
     delta_days = (df[tweet_date_col] - df[account_creation_col]).dt.days
 
@@ -356,12 +414,15 @@ def check_creation_week_cluster(
     df: pd.DataFrame, 
     account_creation_col: str = 'createdDate', 
     n_weeks: int = 4,
-    username_col: str = 'username'
+    username_col: str = 'username',
+    deduplicate_accounts: bool = False,
 ) -> float:
     """
     Calculate the percentage of accounts created within the top N most common account creation weeks.
     """
-    #df_unique = df.drop_duplicates(subset=[username_col]).copy()
+    if deduplicate_accounts and username_col in df.columns:
+        df = df.drop_duplicates(subset=[username_col]).copy()
+
     creation_weeks = df[account_creation_col].dt.to_period('W')
     week_counts = creation_weeks.value_counts()
 
@@ -370,7 +431,8 @@ def check_creation_week_cluster(
 def creation_week_evenness(
     df: pd.DataFrame,
     account_creation_col: str = 'createdDate',
-    username_col: str = 'username'
+    username_col: str = 'username',
+    deduplicate_accounts: bool = False,
 ) -> Optional[float]:
     """
     Calculate how evenly account creations are spread across weeks.
@@ -381,6 +443,9 @@ def creation_week_evenness(
     Returns:
         float | None: Evenness index (0-100), or None with fewer than 2 creation weeks.
     """
+    if deduplicate_accounts and username_col in df.columns:
+        df = df.drop_duplicates(subset=[username_col]).copy()
+
     creation_weeks = pd.to_datetime(df[account_creation_col]).dt.to_period('W')
     week_counts = creation_weeks.value_counts()
 
@@ -553,6 +618,7 @@ def compute_bot_likelihood_metrics(
     G_copypasta: nx.Graph = None,
     copypasta_hub_threshold: Optional[float] = None,
     copypasta_hub_dup_types: Optional[Union[str, Iterable[str]]] = None,
+    deduplicate_accounts: bool = False,
 ) -> dict:
     """
     Combine multiple behavioral metrics to estimate the likelihood that a set of accounts consists of bots
@@ -574,6 +640,8 @@ def compute_bot_likelihood_metrics(
             the copypasta hub score. When None, all graph edges are retained.
         copypasta_hub_dup_types (str or iterable, optional): Duplicate type or types
             retained for the copypasta hub score. When None, all types are retained.
+        deduplicate_accounts (bool): If True, account-quality indicators are calculated
+            once per unique account. Defaults to False to preserve the historical behavior.
         num_digits (int): Number of trailing digits in a username that qualifies it as a
             "default handle" (e.g. auto-generated). Default is 5.
         top_x_percent (int): Percentage of most-active users to consider for the top-user dominance
@@ -671,48 +739,48 @@ def compute_bot_likelihood_metrics(
 
     # 3. Zero Followers & Following
     if followers_col in df.columns and following_col in df.columns:
-        results['zero_followers_and_following (%)'] = round(calculate_zero_fw_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col), 2)
+        results['zero_followers_and_following (%)'] = round(calculate_zero_fw_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col, deduplicate_accounts=deduplicate_accounts), 2)
     else:
         results['zero_followers_and_following (%)'] = None
 
     #3.1 Low Followers & Following
     if followers_col in df.columns and following_col in df.columns:
-        results['low_followers_and_following (%)'] = round(calculate_low_fw_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col, n_followers=n_followers, n_following=n_following), 2)
+        results['low_followers_and_following (%)'] = round(calculate_low_fw_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col, n_followers=n_followers, n_following=n_following, deduplicate_accounts=deduplicate_accounts), 2)
     else:
         results['low_followers_and_following (%)'] = None
 
     #3.2 High Following/Followers Ratio
     if followers_col in df.columns and following_col in df.columns:
-        results['high_following_followers_ratio (%)'] = round(following_followers_ratio_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col, ratio_threshold=fw_ratio_threshold), 2)
+        results['high_following_followers_ratio (%)'] = round(following_followers_ratio_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col, ratio_threshold=fw_ratio_threshold, deduplicate_accounts=deduplicate_accounts), 2)
     else:
         results['high_following_followers_ratio (%)'] = None
 
     # 4. No Image and Description
     if bio_col in df.columns and avatar_col in df.columns:
-        results['no_image_and_description (%)'] = round(no_image_description_score(df, bio_col=bio_col, avatar_col=avatar_col, username_col=username_col), 2)
+        results['no_image_and_description (%)'] = round(no_image_description_score(df, bio_col=bio_col, avatar_col=avatar_col, username_col=username_col, deduplicate_accounts=deduplicate_accounts), 2)
     else:
         results['no_image_and_description (%)'] = None
 
     # 5. Default Handle Score
     if username_col in df.columns:
-        results['default_handle_score (%)'] = round(default_handle_score(df, num_digits, username_col=username_col), 2)
+        results['default_handle_score (%)'] = round(default_handle_score(df, num_digits, username_col=username_col, deduplicate_accounts=deduplicate_accounts), 2)
     else:
         results['default_handle_score (%)'] = None
 
     if tweets_per_day_col in df.columns:
-        results['over_tweet_per_day (%)'] = round(over_tot_post_per_day(df, over_post_per_day_threshold, tweets_per_day_col=tweets_per_day_col, username_col=username_col), 2)
+        results['over_tweet_per_day (%)'] = round(over_tot_post_per_day(df, over_post_per_day_threshold, tweets_per_day_col=tweets_per_day_col, username_col=username_col, deduplicate_accounts=deduplicate_accounts), 2)
     else:
         results['over_tweet_per_day (%)'] = None
 
     # 6. Recent Account Creation
     if account_creation_col in df.columns and tweet_date_col in df.columns:
-        results['recent_account_creation (%)'] = round(check_recent_account(df, account_creation_col=account_creation_col, tweet_date_col=tweet_date_col, age_days_threshold=age_days_threshold, username_col=username_col), 2)
+        results['recent_account_creation (%)'] = round(check_recent_account(df, account_creation_col=account_creation_col, tweet_date_col=tweet_date_col, age_days_threshold=age_days_threshold, username_col=username_col, deduplicate_accounts=deduplicate_accounts), 2)
     else:
         results['recent_account_creation (%)'] = None
     
     # 7. Account Creation weeks clusters
     if account_creation_col in df.columns:
-        results['top_creation_weeks (%)'] = round(check_creation_week_cluster(df, account_creation_col=account_creation_col, n_weeks=n_weeks, username_col=username_col), 2)
+        results['top_creation_weeks (%)'] = round(check_creation_week_cluster(df, account_creation_col=account_creation_col, n_weeks=n_weeks, username_col=username_col, deduplicate_accounts=deduplicate_accounts), 2)
     else:
         results['top_creation_weeks (%)'] = None
     
@@ -754,7 +822,7 @@ def compute_bot_likelihood_metrics(
 
     # 13. Creation Week Evenness (low => accounts created in a burst)
     if account_creation_col in df.columns:
-        evenness = creation_week_evenness(df, account_creation_col=account_creation_col, username_col=username_col)
+        evenness = creation_week_evenness(df, account_creation_col=account_creation_col, username_col=username_col, deduplicate_accounts=deduplicate_accounts)
         results['creation_week_evenness (%)'] = round(evenness, 2) if evenness is not None else None
     else:
         results['creation_week_evenness (%)'] = None
