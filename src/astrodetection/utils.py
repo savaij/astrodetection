@@ -528,7 +528,7 @@ def excessive_tags_score(
 
 #find communities in G_sharing and save them as node attributes for later use in Gephi
 
-def get_similarity_hub_score(G_sharing, df, threshold=0.9, username_col="screen name", type_col="row_type"):
+def get_similarity_hub_score(G_sharing, df, threshold=0.9, username_col="screen name", type_col="row_type", return_communities=False):
     """
     Compute the similarity hub score based on the largest community in the co-sharing graph.
 
@@ -547,11 +547,16 @@ def get_similarity_hub_score(G_sharing, df, threshold=0.9, username_col="screen 
         type_col (str or None): Name of the column in df that identifies row type.
             If provided, only rows where type_col == 'retweet' are counted as users.
             If None, all rows are counted. Default is "row_type".
+        return_communities (bool): If True, also return the account names (node ids) of
+            the largest community. Default is False.
 
     Returns:
         float: The hub score as a percentage (0–100). Calculated as:
             (size of largest community / total unique retweeting users) * 100.
             Returns 0 if there are no retweeting users.
+        list: Only when `return_communities` is True, returned alongside the score as a
+            tuple `(score, largest_community_accounts)`. Account names (node ids) belonging
+            to the largest community, or an empty list when no community was found.
     """
 
     G_sharing = G_sharing.copy()  # avoid modifying the original graph
@@ -574,9 +579,9 @@ def get_similarity_hub_score(G_sharing, df, threshold=0.9, username_col="screen 
     G_sharing.remove_nodes_from(list(nx.isolates(G_sharing)))
 
     communities = community.greedy_modularity_communities(G_sharing, weight='weight')
-    
 
-    largest_community_size = len(communities[0] if communities else [])
+    largest_community = communities[0] if communities else set()
+    largest_community_size = len(largest_community)
 
     if type_col:
         n_users = df[df[type_col]=='retweet'][username_col].nunique()
@@ -584,7 +589,12 @@ def get_similarity_hub_score(G_sharing, df, threshold=0.9, username_col="screen 
         n_users = df[username_col].nunique()
 
     score = largest_community_size / n_users if n_users > 0 else 0
-    return score * 100
+    score = score * 100
+
+    if return_communities:
+        return score, list(largest_community)
+
+    return score
 
 def compute_bot_likelihood_metrics(
     df: pd.DataFrame,
@@ -619,6 +629,7 @@ def compute_bot_likelihood_metrics(
     copypasta_hub_threshold: Optional[float] = None,
     copypasta_hub_dup_types: Optional[Union[str, Iterable[str]]] = None,
     deduplicate_accounts: bool = False,
+    return_communities: bool = False,
 ) -> dict:
     """
     Combine multiple behavioral metrics to estimate the likelihood that a set of accounts consists of bots
@@ -642,6 +653,9 @@ def compute_bot_likelihood_metrics(
             retained for the copypasta hub score. When None, all types are retained.
         deduplicate_accounts (bool): If True, account-quality indicators are calculated
             once per unique account. Defaults to False to preserve the historical behavior.
+        return_communities (bool): If True, forwarded to every `get_similarity_hub_score`
+            call (similarity, temporal and URL hub scores). Adds the account names of each
+            largest community to the result dict. Defaults to False.
         num_digits (int): Number of trailing digits in a username that qualifies it as a
             "default handle" (e.g. auto-generated). Default is 5.
         top_x_percent (int): Percentage of most-active users to consider for the top-user dominance
@@ -697,6 +711,12 @@ def compute_bot_likelihood_metrics(
             - 'similarity_hub_score (%)': % of retweeting users belonging to the largest community in `G_sharing`.
             - 'temporal_hub_score (%)': % of users belonging to the largest community in `G_temporal` (shared activity time bins).
             - 'url_hub_score (%)': % of users belonging to the largest community in `G_url` (shared URLs).
+            - 'similarity_hub_largest_community': Account names in the largest `G_sharing` community.
+              Only present when `return_communities=True`.
+            - 'temporal_hub_largest_community': Account names in the largest `G_temporal` community.
+              Only present when `return_communities=True`.
+            - 'url_hub_largest_community': Account names in the largest `G_url` community.
+              Only present when `return_communities=True`.
             - 'number_of_original_tweets': Absolute count of rows where `type_col` == 'post', or None if `type_col` is absent.
             - 'number_of_retweets': Absolute count of rows where `type_col` == 'retweet', or None if `type_col` is absent.
             - 'number_of_tweets_or_retweets_with_text': Absolute count of rows with non-null `tweet_text_col`, or None if absent.
@@ -797,21 +817,45 @@ def compute_bot_likelihood_metrics(
     
     # 9. Similarity Hub Score
     if G_sharing is not None and username_col in df.columns:
-        results['similarity_hub_score (%)'] = round(get_similarity_hub_score(G_sharing, df, threshold=similarity_sharing_threshold, username_col=username_col, type_col=type_col), 2)
+        hub_result = get_similarity_hub_score(G_sharing, df, threshold=similarity_sharing_threshold, username_col=username_col, type_col=type_col, return_communities=return_communities)
+        if return_communities:
+            score, largest_community = hub_result
+            results['similarity_hub_largest_community'] = largest_community
+        else:
+            score = hub_result
+        results['similarity_hub_score (%)'] = round(score, 2)
     else:
         results['similarity_hub_score (%)'] = None
+        if return_communities:
+            results['similarity_hub_largest_community'] = None
 
     # 10. Temporal Hub Score (shared activity time bins; counts all users, no row-type filter)
     if G_temporal is not None and username_col in df.columns:
-        results['temporal_hub_score (%)'] = round(get_similarity_hub_score(G_temporal, df, threshold=temporal_threshold, username_col=username_col, type_col=None), 2)
+        hub_result = get_similarity_hub_score(G_temporal, df, threshold=temporal_threshold, username_col=username_col, type_col=None, return_communities=return_communities)
+        if return_communities:
+            score, largest_community = hub_result
+            results['temporal_hub_largest_community'] = largest_community
+        else:
+            score = hub_result
+        results['temporal_hub_score (%)'] = round(score, 2)
     else:
         results['temporal_hub_score (%)'] = None
+        if return_communities:
+            results['temporal_hub_largest_community'] = None
 
     # 11. URL Hub Score (shared links; counts all users, no row-type filter)
     if G_url is not None and username_col in df.columns:
-        results['url_hub_score (%)'] = round(get_similarity_hub_score(G_url, df, threshold=url_threshold, username_col=username_col, type_col=None), 2)
+        hub_result = get_similarity_hub_score(G_url, df, threshold=url_threshold, username_col=username_col, type_col=None, return_communities=return_communities)
+        if return_communities:
+            score, largest_community = hub_result
+            results['url_hub_largest_community'] = largest_community
+        else:
+            score = hub_result
+        results['url_hub_score (%)'] = round(score, 2)
     else:
         results['url_hub_score (%)'] = None
+        if return_communities:
+            results['url_hub_largest_community'] = None
 
     # 12. Account Activity Evenness (low => activity concentrated in few accounts)
     if username_col in df.columns:
