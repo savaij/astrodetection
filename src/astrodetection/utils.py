@@ -736,82 +736,79 @@ def compute_bot_likelihood_metrics(
 
     # 1. Copypasta Score (solo se fornito `matches`)
     if matches is not None:
-        results['copypasta_score (%)'] = round(copypasta_score(matches, df, matches_threshold), 2)
+        results['copypasta_score (%)'] = copypasta_score(matches, df, matches_threshold)
 
     # 1.1 Copypasta Hub Score (largest post-similarity component / all original posts)
     if G_copypasta is not None:
-        results['copypasta_hub_score (%)'] = round(
-            copypasta_score_hub(
-                G_copypasta,
-                df,
-                threshold=copypasta_hub_threshold,
-                dup_types=copypasta_hub_dup_types,
-            ),
-            2,
+        results['copypasta_hub_score (%)'] = copypasta_score_hub(
+            G_copypasta,
+            df,
+            threshold=copypasta_hub_threshold,
+            dup_types=copypasta_hub_dup_types,
         )
     else:
         results['copypasta_hub_score (%)'] = None
 
     # 2. Top User Dominance
     top_users_percent, top_users_n = get_top_users(df, top_x_percent, username_col=username_col)
-    results['top_users_post_percent (%)'] = round(top_users_percent, 2)
+    results['top_users_post_percent (%)'] = top_users_percent
     results['top_users_count'] = top_users_n
 
     # 3. Zero Followers & Following
     if followers_col in df.columns and following_col in df.columns:
-        results['zero_followers_and_following (%)'] = round(calculate_zero_fw_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col, deduplicate_accounts=deduplicate_accounts), 2)
+        results['zero_followers_and_following (%)'] = calculate_zero_fw_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col, deduplicate_accounts=deduplicate_accounts)
     else:
         results['zero_followers_and_following (%)'] = None
 
     #3.1 Low Followers & Following
     if followers_col in df.columns and following_col in df.columns:
-        results['low_followers_and_following (%)'] = round(calculate_low_fw_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col, n_followers=n_followers, n_following=n_following, deduplicate_accounts=deduplicate_accounts), 2)
+        results['low_followers_and_following (%)'] = calculate_low_fw_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col, n_followers=n_followers, n_following=n_following, deduplicate_accounts=deduplicate_accounts)
     else:
         results['low_followers_and_following (%)'] = None
 
     #3.2 High Following/Followers Ratio
     if followers_col in df.columns and following_col in df.columns:
-        results['high_following_followers_ratio (%)'] = round(following_followers_ratio_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col, ratio_threshold=fw_ratio_threshold, deduplicate_accounts=deduplicate_accounts), 2)
+        results['high_following_followers_ratio (%)'] = following_followers_ratio_score(df, followers_col=followers_col, following_col=following_col, username_col=username_col, ratio_threshold=fw_ratio_threshold, deduplicate_accounts=deduplicate_accounts)
     else:
         results['high_following_followers_ratio (%)'] = None
 
     # 4. No Image and Description
     if bio_col in df.columns and avatar_col in df.columns:
-        results['no_image_and_description (%)'] = round(no_image_description_score(df, bio_col=bio_col, avatar_col=avatar_col, username_col=username_col, deduplicate_accounts=deduplicate_accounts), 2)
+        results['no_image_and_description (%)'] = no_image_description_score(df, bio_col=bio_col, avatar_col=avatar_col, username_col=username_col, deduplicate_accounts=deduplicate_accounts)
     else:
         results['no_image_and_description (%)'] = None
 
     # 5. Default Handle Score
     if username_col in df.columns:
-        results['default_handle_score (%)'] = round(default_handle_score(df, num_digits, username_col=username_col, deduplicate_accounts=deduplicate_accounts), 2)
+        results['default_handle_score (%)'] = default_handle_score(df, num_digits, username_col=username_col, deduplicate_accounts=deduplicate_accounts)
     else:
         results['default_handle_score (%)'] = None
 
     if tweets_per_day_col in df.columns:
-        results['over_tweet_per_day (%)'] = round(over_tot_post_per_day(df, over_post_per_day_threshold, tweets_per_day_col=tweets_per_day_col, username_col=username_col, deduplicate_accounts=deduplicate_accounts), 2)
+        results['over_tweet_per_day (%)'] = over_tot_post_per_day(df, over_post_per_day_threshold, tweets_per_day_col=tweets_per_day_col, username_col=username_col, deduplicate_accounts=deduplicate_accounts)
     else:
         results['over_tweet_per_day (%)'] = None
 
     # 6. Recent Account Creation
     if account_creation_col in df.columns and tweet_date_col in df.columns:
-        results['recent_account_creation (%)'] = round(check_recent_account(df, account_creation_col=account_creation_col, tweet_date_col=tweet_date_col, age_days_threshold=age_days_threshold, username_col=username_col, deduplicate_accounts=deduplicate_accounts), 2)
+        results['recent_account_creation (%)'] = check_recent_account(df, account_creation_col=account_creation_col, tweet_date_col=tweet_date_col, age_days_threshold=age_days_threshold, username_col=username_col, deduplicate_accounts=deduplicate_accounts)
     else:
         results['recent_account_creation (%)'] = None
     
     # 7. Account Creation weeks clusters
     if account_creation_col in df.columns:
-        results['top_creation_weeks (%)'] = round(check_creation_week_cluster(df, account_creation_col=account_creation_col, n_weeks=n_weeks, username_col=username_col, deduplicate_accounts=deduplicate_accounts), 2)
+        results['top_creation_weeks (%)'] = check_creation_week_cluster(df, account_creation_col=account_creation_col, n_weeks=n_weeks, username_col=username_col, deduplicate_accounts=deduplicate_accounts)
     else:
         results['top_creation_weeks (%)'] = None
     
     # 8. Excessive Tags Score
     if tweet_text_col in df.columns:
-        results['excessive_tags_score_full_dataset (%)'] = round(excessive_tags_score(df, tweet_text_col=tweet_text_col), 2)
+        results['excessive_tags_score_full_dataset (%)'] = excessive_tags_score(df, tweet_text_col=tweet_text_col)
 
         df_original_tweets = df[df[type_col] == 'post'] if type_col in df.columns else df
 
         if not df_original_tweets.empty:
-            results['excessive_tags_score_original_tweets (%)'] = round(excessive_tags_score(df_original_tweets, tweet_text_col=tweet_text_col), 2)
+            results['excessive_tags_score_original_tweets (%)'] = excessive_tags_score(df_original_tweets, tweet_text_col=tweet_text_col)
     else:
         results['excessive_tags_score_full_dataset (%)'] = None
     
@@ -823,7 +820,7 @@ def compute_bot_likelihood_metrics(
             results['similarity_hub_largest_community'] = largest_community
         else:
             score = hub_result
-        results['similarity_hub_score (%)'] = round(score, 2)
+        results['similarity_hub_score (%)'] = score
     else:
         results['similarity_hub_score (%)'] = None
         if return_communities:
@@ -837,7 +834,7 @@ def compute_bot_likelihood_metrics(
             results['temporal_hub_largest_community'] = largest_community
         else:
             score = hub_result
-        results['temporal_hub_score (%)'] = round(score, 2)
+        results['temporal_hub_score (%)'] = score
     else:
         results['temporal_hub_score (%)'] = None
         if return_communities:
@@ -851,7 +848,7 @@ def compute_bot_likelihood_metrics(
             results['url_hub_largest_community'] = largest_community
         else:
             score = hub_result
-        results['url_hub_score (%)'] = round(score, 2)
+        results['url_hub_score (%)'] = score
     else:
         results['url_hub_score (%)'] = None
         if return_communities:
@@ -860,21 +857,21 @@ def compute_bot_likelihood_metrics(
     # 12. Account Activity Evenness (low => activity concentrated in few accounts)
     if username_col in df.columns:
         evenness = account_activity_evenness(df, username_col=username_col)
-        results['account_activity_evenness (%)'] = round(evenness, 2) if evenness is not None else None
+        results['account_activity_evenness (%)'] = evenness
     else:
         results['account_activity_evenness (%)'] = None
 
     # 13. Creation Week Evenness (low => accounts created in a burst)
     if account_creation_col in df.columns:
         evenness = creation_week_evenness(df, account_creation_col=account_creation_col, username_col=username_col, deduplicate_accounts=deduplicate_accounts)
-        results['creation_week_evenness (%)'] = round(evenness, 2) if evenness is not None else None
+        results['creation_week_evenness (%)'] = evenness
     else:
         results['creation_week_evenness (%)'] = None
 
     # 14. Average Activity per Account
     if username_col in df.columns:
         for key, value in avg_activity_per_account(df, username_col=username_col, type_col=type_col).items():
-            results[key] = round(value, 2) if value is not None else None
+            results[key] = value
     else:
         for key in ('avg_posts_per_account', 'avg_retweets_per_account', 'avg_activity_per_account'):
             results[key] = None
