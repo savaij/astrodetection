@@ -30,7 +30,20 @@ _TRACKING_PARAMS = frozenset({
     'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id',
     'fbclid', 'gclid', 'gclsrc', 'dclid', 'msclkid', 'yclid', 'twclid',
     'mc_cid', 'mc_eid', 'igshid', 'ref_src', 'ref_url', 's', 't', 'si',
+    # AT Internet / Piano (common on French news sites, e.g. mediapart.fr ?xtor=CS3-5)
+    'xtor', 'xts',
+    # Google Analytics cross-domain, HubSpot, Marketo, Webtrends, Adobe, misc. newsletters
+    '_ga', '_gl', '_hsenc', '_hsmi', 'mkt_tok', 'wt_mc', 'wt.mc_id', 'cmpid', 'ncid', 'ocid',
+    'ito', 'oly_enc_id', 'oly_anon_id', 'vero_id', '__twitter_impression',
 })
+
+# Prefix families of tracking parameters (utm_*, Matomo/Piwik, AT Internet, HubSpot ads).
+_TRACKING_PREFIXES = ('utm_', 'pk_', 'mtm_', 'matomo_', 'at_', 'hsa_')
+
+
+def _is_tracking_param(key):
+    key = key.lower()
+    return key in _TRACKING_PARAMS or key.startswith(_TRACKING_PREFIXES)
 
 
 def create_coSharing_graph(data, type_column='row_type', userid_col='screen name', feature_col='retweeted user', min_retweets=3, min_overlap=3, fast_graph=False, weight_threshold=0.9):
@@ -501,7 +514,7 @@ def _normalize_url(url, granularity='url', strip_tracking_params=True):
     if parts.query:
         params = parse_qsl(parts.query, keep_blank_values=True)
         if strip_tracking_params:
-            params = [(k, v) for k, v in params if k.lower() not in _TRACKING_PARAMS]
+            params = [(k, v) for k, v in params if not _is_tracking_param(k)]
         if params:
             query = '?' + urlencode(sorted(params))
 
