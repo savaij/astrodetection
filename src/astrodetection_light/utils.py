@@ -526,6 +526,47 @@ def excessive_tags_score(
     return score
 
 
+WORD_RE = re.compile(r"\b\w+(?:['’]\w+)*\b", flags=re.UNICODE)
+SENTENCE_SPLIT_RE = re.compile(r"[.!?…]+(?:[\"'»”’)\]]+)?\s*")
+_URL_RE = re.compile(r"https?://\S+|www\.\S+", flags=re.IGNORECASE)
+
+
+def _median_sentence_length(text: str) -> float:
+    """Median number of words per sentence in `text` (NaN if it has no words).
+
+    URLs are removed first, since their dots would otherwise split sentences.
+    """
+    lengths = [len(WORD_RE.findall(s)) for s in SENTENCE_SPLIT_RE.split(_URL_RE.sub(" ", text))]
+    lengths = [n for n in lengths if n > 0]
+    return np.median(lengths) if lengths else np.nan
+
+
+def cv_sentence_length(
+    df: pd.DataFrame,
+    tweet_text_col: str = 'tweet') -> Optional[float]:
+    """
+    Coefficient of variation (std / mean) of the per-text median sentence length.
+
+    Each text is reduced to the median number of words per sentence; the CV is then
+    computed across texts. A low value means texts share a very uniform sentence
+    structure, which can signal templated or generated content.
+
+    Args:
+        df (pd.DataFrame): DataFrame containing texts.
+        tweet_text_col (str): Name of the column with texts.
+
+    Returns:
+        float | None: Coefficient of variation (population std), or None with fewer
+        than 2 texts containing words.
+    """
+    medians = df[tweet_text_col].dropna().map(_median_sentence_length).dropna()
+
+    if len(medians) < 2:
+        return None
+
+    return medians.std(ddof=0) / medians.mean()
+
+
 #find communities in G_sharing and save them as node attributes for later use in Gephi
 
 def get_similarity_hub_score(G_sharing, df, threshold=0.9, username_col="screen name", type_col="row_type", return_communities=False):
@@ -635,7 +676,7 @@ def compute_bot_likelihood_metrics(
     Combine multiple behavioral metrics to estimate the likelihood that a set of accounts consists of bots
     or is engaged in coordinated inauthentic behavior.
 
-    Computes up to 15 indicators. Each metric is included in the result dict only when the required
+    Computes up to 16 indicators. Each metric is included in the result dict only when the required
     columns are present in `df` (or the required arguments are provided); otherwise its value is None.
 
     Parameters:
@@ -725,6 +766,9 @@ def compute_bot_likelihood_metrics(
             - 'avg_posts_per_account': Mean number of `type_col` == 'post' rows per unique account.
             - 'avg_retweets_per_account': Mean number of `type_col` == 'retweet' rows per unique account.
             - 'avg_activity_per_account': Mean number of rows (posts + retweets) per unique account.
+            - 'cv_sentence_length': Coefficient of variation (std / mean) across `type_col` == 'post'
+              texts of each text's median sentence length in words. Low => uniform sentence
+              structure. None with fewer than 2 texts containing words.
 
         Note on polarity: unlike every other metric here, the two evenness indices are *inverted* —
         0 means maximum concentration (all activity in one account / all accounts created in one
@@ -875,5 +919,12 @@ def compute_bot_likelihood_metrics(
     else:
         for key in ('avg_posts_per_account', 'avg_retweets_per_account', 'avg_activity_per_account'):
             results[key] = None
+
+    # 15. Sentence Length Variation (low => uniform sentence structure across original posts)
+    if tweet_text_col in df.columns:
+        df_original_tweets = df[df[type_col] == 'post'] if type_col in df.columns else df
+        results['cv_sentence_length'] = cv_sentence_length(df_original_tweets, tweet_text_col=tweet_text_col)
+    else:
+        results['cv_sentence_length'] = None
 
     return results
