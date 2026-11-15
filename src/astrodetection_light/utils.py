@@ -567,6 +567,81 @@ def cv_sentence_length(
     return medians.std(ddof=0) / medians.mean()
 
 
+def temporal_peak_entropy(
+    df: pd.DataFrame,
+    tweet_date_col: str = 'tweet_date',
+    bin_minutes: float = 10,
+    window_bins: Optional[int] = 6,
+) -> Optional[float]:
+    """
+    Pielou evenness of the activity inside the busiest window of consecutive time bins.
+
+    Every row (post or retweet) is one activity. Timestamps are floored to `bin_minutes`
+    bins (empty bins included); the window of `window_bins` consecutive bins with the
+    highest total activity is selected (earliest one on ties) and its distribution is
+    scored as J = -sum(p_i * ln p_i) / ln(K), with K = `window_bins`. Empty bins add
+    nothing to the sum but still count in K. When the observed span is shorter than K
+    bins, the window is padded with empty bins, so K is always fixed.
+
+    With `window_bins=None` the window is the whole observed span (oldest to most recent
+    bin, empty bins included), so J becomes the Pielou evenness of the full distribution
+    and K is the number of bins in that span.
+
+    A value near 0 means the peak is concentrated in very few bins (a burst, typical of
+    coordinated activity); near 1 means activity is spread uniformly over the window.
+
+    Args:
+        df (pd.DataFrame): DataFrame of activities (posts and retweets).
+        tweet_date_col (str): Column with activity timestamps. Parsed as in
+            `create_coActivity_graph` (UTC-normalized, unparseable/missing values dropped).
+        bin_minutes (float): Width of each time bin in minutes. Default is 10.
+        window_bins (int | None): Number of consecutive bins in the window (K). Default
+            is 6. None => the whole span from the oldest to the most recent bin.
+
+    Returns:
+        float | None: Evenness in [0, 1], or None when `df` has no valid timestamp, or
+        when `window_bins=None` and all activity falls in a single bin (K = 1, undefined).
+    """
+    if bin_minutes <= 0:
+        raise ValueError("bin_minutes must be positive")
+    if window_bins is not None:
+        if int(window_bins) != window_bins or window_bins < 2:
+            raise ValueError("window_bins must be None or an integer >= 2 (ln(1) = 0 leaves J undefined)")
+        window_bins = int(window_bins)
+
+    if df.empty or tweet_date_col not in df.columns:
+        return None
+
+    ts = pd.to_datetime(df[tweet_date_col], utc=True, errors='coerce').dropna()
+    if ts.empty:
+        return None
+
+    bin_width = pd.Timedelta(minutes=bin_minutes)
+    binned = ts.dt.floor(bin_width)
+    full_range = pd.date_range(binned.min(), binned.max(), freq=bin_width)
+    counts = binned.value_counts().reindex(full_range, fill_value=0).to_numpy(dtype=float)
+
+    if window_bins is None:
+        # Whole-span evenness: K = number of bins between the oldest and newest activity.
+        if len(counts) < 2:
+            return None
+        window_bins = len(counts)
+
+    if len(counts) < window_bins:
+        counts = np.pad(counts, (0, window_bins - len(counts)))
+
+    # Rolling sums via cumulative sum; argmax returns the first (earliest) maximum.
+    cumsum = np.concatenate(([0.0], np.cumsum(counts)))
+    window_sums = cumsum[window_bins:] - cumsum[:-window_bins]
+    start = int(np.argmax(window_sums))
+    window = counts[start:start + window_bins]
+
+    p = window[window > 0] / window.sum()
+    h = -np.sum(p * np.log(p))
+
+    return float(np.clip(h / np.log(window_bins), 0.0, 1.0))
+
+
 #find communities in G_sharing and save them as node attributes for later use in Gephi
 
 def get_similarity_hub_score(G_sharing, df, threshold=0.9, username_col="screen name", type_col="row_type", return_communities=False):
@@ -671,6 +746,8 @@ def compute_bot_likelihood_metrics(
     copypasta_hub_dup_types: Optional[Union[str, Iterable[str]]] = None,
     deduplicate_accounts: bool = False,
     return_communities: bool = False,
+    peak_entropy_bin_minutes: float = 10,
+    peak_entropy_window_bins: Optional[int] = 6,
 ) -> dict:
     """
     Combine multiple behavioral metrics to estimate the likelihood that a set of accounts consists of bots
@@ -721,6 +798,11 @@ def compute_bot_likelihood_metrics(
             community detection. Default is 0.9.
         fw_ratio_threshold (float): Minimum following/followers ratio above which a row is
             considered suspicious. Default is 10.
+        peak_entropy_bin_minutes (float): Time-bin width in minutes for the temporal peak
+            entropy. Default is 10.
+        peak_entropy_window_bins (int): Number of consecutive bins in the temporal peak
+            entropy window. Default is 6 (one hour with 10-minute bins). None => the window
+            is the whole span (oldest to most recent bin): evenness of the full distribution.
         username_col (str): Column name for user handles. Default is 'username'.
         followers_col (str): Column name for follower count. Default is 'followers'.
         following_col (str): Column name for following count. Default is 'following'.
@@ -769,11 +851,17 @@ def compute_bot_likelihood_metrics(
             - 'cv_sentence_length': Coefficient of variation (std / mean) across `type_col` == 'post'
               texts of each text's median sentence length in words. Low => uniform sentence
               structure. None with fewer than 2 texts containing words.
+            - 'temporal_peak_entropy': Pielou evenness (0-1, not %) of all rows' activity across
+              the `peak_entropy_window_bins` bins of the busiest window. Low => burst concentrated
+              in few bins. None when `tweet_date_col` is absent or has no valid timestamp. With
+              `peak_entropy_window_bins=None` it is computed over the whole span (None if that
+              span is a single bin).
 
         Note on polarity: unlike every other metric here, the two evenness indices are *inverted* —
         0 means maximum concentration (all activity in one account / all accounts created in one
         week, i.e. highly suspicious) and 100 means a perfectly uniform distribution. They are None
         when there are fewer than 2 accounts / creation weeks, where the index is undefined.
+        'temporal_peak_entropy' has the same inverted polarity, on a 0-1 scale.
     """
 
     results = {}
@@ -926,5 +1014,16 @@ def compute_bot_likelihood_metrics(
         results['cv_sentence_length'] = cv_sentence_length(df_original_tweets, tweet_text_col=tweet_text_col)
     else:
         results['cv_sentence_length'] = None
+
+    # 16. Temporal Peak Entropy (low => busiest window concentrated in few bins; all rows)
+    if tweet_date_col in df.columns:
+        results['temporal_peak_entropy'] = temporal_peak_entropy(
+            df,
+            tweet_date_col=tweet_date_col,
+            bin_minutes=peak_entropy_bin_minutes,
+            window_bins=peak_entropy_window_bins,
+        )
+    else:
+        results['temporal_peak_entropy'] = None
 
     return results
