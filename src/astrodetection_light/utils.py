@@ -712,6 +712,55 @@ def get_similarity_hub_score(G_sharing, df, threshold=0.9, username_col="screen 
 
     return score
 
+def get_concentration_score(
+    G_sharing: nx.Graph,
+    df: pd.DataFrame,
+    threshold: float = 0.9,
+    username_col: str = "screen name",
+    type_col: Optional[str] = "row_type",
+) -> Optional[float]:
+    """Return concentration 1-J of the reference population, on a 0-1 scale.
+
+    Edges with weight < threshold (missing weight defaults to 0) and isolated
+    nodes are removed from a copy of the graph. Connected components of sizes
+    s_i are used, rather than the modularity communities of the hub score.
+    N is the number of unique, non-null users in df: retweet rows when type_col
+    is provided, otherwise all rows. Users outside the filtered graph count as
+    singleton components, giving 1-J = sum(s_i * ln(s_i)) / (N * ln(N)).
+
+    A score of 1 means all users form one component; 0 means all users are isolated.
+    Returns None when N <= 1. Raises ValueError if a retained graph node is
+    absent from the reference population. The input graph is never modified.
+    """
+    graph = G_sharing.copy()
+    built_with = graph.graph.get('weight_threshold')
+    if built_with is not None and threshold < built_with:
+        warnings.warn(
+            f"This graph was built in fast mode with weight_threshold={built_with}: edges with "
+            f"weight in [{threshold}, {built_with}) do not exist. Use threshold >= {built_with} "
+            f"for a correct result.",
+            stacklevel=2,
+        )
+    graph.remove_edges_from([
+        (u, v) for u, v, data in graph.edges(data=True)
+        if data.get('weight', 0) < threshold
+    ])
+    graph.remove_nodes_from(list(nx.isolates(graph)))
+
+    rows = df[df[type_col] == 'retweet'] if type_col else df
+    users = set(rows[username_col].dropna())
+    if not set(graph.nodes).issubset(users):
+        raise ValueError('Filtered graph nodes are absent from the reference population')
+    n_users = len(users)
+    if n_users <= 1:
+        return None
+
+    sizes = np.asarray([len(c) for c in nx.connected_components(graph)], dtype=float)
+    return float(np.clip(
+        np.sum(sizes * np.log(sizes)) / (n_users * np.log(n_users)), 0, 1
+    ))
+
+
 def compute_bot_likelihood_metrics(
     df: pd.DataFrame,
     matches: pd.DataFrame = None,
@@ -753,7 +802,7 @@ def compute_bot_likelihood_metrics(
     Combine multiple behavioral metrics to estimate the likelihood that a set of accounts consists of bots
     or is engaged in coordinated inauthentic behavior.
 
-    Computes up to 16 indicators. Each metric is included in the result dict only when the required
+    Computes behavioral and network indicators. Each metric is included in the result dict only when the required
     columns are present in `df` (or the required arguments are provided); otherwise its value is None.
 
     Parameters:
@@ -834,6 +883,11 @@ def compute_bot_likelihood_metrics(
             - 'similarity_hub_score (%)': % of retweeting users belonging to the largest community in `G_sharing`.
             - 'temporal_hub_score (%)': % of users belonging to the largest community in `G_temporal` (shared activity time bins).
             - 'url_hub_score (%)': % of users belonging to the largest community in `G_url` (shared URLs).
+            - 'similarity_concentration': Concentration 1-J (0-1) of retweeting users in `G_sharing`.
+            - 'temporal_concentration': Concentration 1-J (0-1) of all users in `G_temporal`.
+            - 'url_concentration': Concentration 1-J (0-1) of all users in `G_url`.
+              Concentration is 1 for one component containing all users, 0 for all users
+              isolated, and None for fewer than 2 users or unavailable input data.
             - 'similarity_hub_largest_community': Account names in the largest `G_sharing` community.
               Only present when `return_communities=True`.
             - 'temporal_hub_largest_community': Account names in the largest `G_temporal` community.
@@ -857,11 +911,12 @@ def compute_bot_likelihood_metrics(
               `peak_entropy_window_bins=None` it is computed over the whole span (None if that
               span is a single bin).
 
-        Note on polarity: unlike every other metric here, the two evenness indices are *inverted* —
+        Note on polarity: the two evenness indices are *inverted* —
         0 means maximum concentration (all activity in one account / all accounts created in one
         week, i.e. highly suspicious) and 100 means a perfectly uniform distribution. They are None
         when there are fewer than 2 accounts / creation weeks, where the index is undefined.
         'temporal_peak_entropy' has the same inverted polarity, on a 0-1 scale.
+        The three concentration indices are on a 0-1 scale: higher means more concentrated.
     """
 
     results = {}
@@ -953,8 +1008,13 @@ def compute_bot_likelihood_metrics(
         else:
             score = hub_result
         results['similarity_hub_score (%)'] = score
+        results['similarity_concentration'] = get_concentration_score(
+            G_sharing, df, threshold=similarity_sharing_threshold,
+            username_col=username_col, type_col=type_col,
+        )
     else:
         results['similarity_hub_score (%)'] = None
+        results['similarity_concentration'] = None
         if return_communities:
             results['similarity_hub_largest_community'] = None
 
@@ -967,8 +1027,13 @@ def compute_bot_likelihood_metrics(
         else:
             score = hub_result
         results['temporal_hub_score (%)'] = score
+        results['temporal_concentration'] = get_concentration_score(
+            G_temporal, df, threshold=temporal_threshold,
+            username_col=username_col, type_col=None,
+        )
     else:
         results['temporal_hub_score (%)'] = None
+        results['temporal_concentration'] = None
         if return_communities:
             results['temporal_hub_largest_community'] = None
 
@@ -981,8 +1046,13 @@ def compute_bot_likelihood_metrics(
         else:
             score = hub_result
         results['url_hub_score (%)'] = score
+        results['url_concentration'] = get_concentration_score(
+            G_url, df, threshold=url_threshold,
+            username_col=username_col, type_col=None,
+        )
     else:
         results['url_hub_score (%)'] = None
+        results['url_concentration'] = None
         if return_communities:
             results['url_hub_largest_community'] = None
 
